@@ -33,32 +33,32 @@ pub enum FileKind {
 impl FileKind {
     pub fn icon(self) -> &'static str {
         match self {
-            Self::Directory => "D",
-            Self::Code => "</>",
-            Self::Rust => "🦀",
-            Self::C => "C",
-            Self::Cpp => "C++",
-            Self::Python => "🐍",
-            Self::Java => "☕",
-            Self::JavaScript => "JS",
-            Self::TypeScript => "TS",
-            Self::Html => "H",
-            Self::Css => "#",
-            Self::Json => "{}",
-            Self::Toml => "T",
-            Self::Yaml => "Y",
-            Self::Markdown => "M",
-            Self::Text => "T",
-            Self::Pdf => "P",
-            Self::Image => "I",
-            Self::Video => "▶",
-            Self::Audio => "♫",
-            Self::Archive => "A",
-            Self::Font => "F",
-            Self::Shell => "$",
-            Self::Executable => "▶",
-            Self::Symlink => "@",
-            Self::Unknown => "?",
+            Self::Directory => "\u{ea83}",
+            Self::Code => "\u{eae9}",
+            Self::Rust => "\u{e7a8}",
+            Self::C => "\u{e61e}",
+            Self::Cpp => "\u{e61d}",
+            Self::Python => "\u{e73c}",
+            Self::Java => "\u{e738}",
+            Self::JavaScript => "\u{e74e}",
+            Self::TypeScript => "\u{e8ca}",
+            Self::Html => "\u{e736}",
+            Self::Css => "\u{e749}",
+            Self::Json => "\u{eb0f}",
+            Self::Toml => "\u{e6b2}",
+            Self::Yaml => "\u{e8eb}",
+            Self::Markdown => "\u{e73e}",
+            Self::Text => "\u{ec5e}",
+            Self::Pdf => "\u{eaeb}",
+            Self::Image => "\u{eaea}",
+            Self::Video => "\u{ead9}",
+            Self::Audio => "\u{ec1b}",
+            Self::Archive => "\u{ea98}",
+            Self::Font => "\u{ea7b}",
+            Self::Shell => "\u{ea85}",
+            Self::Executable => "\u{eb2c}",
+            Self::Symlink => "\u{eb15}",
+            Self::Unknown => "\u{ea7b}",
         }
     }
 
@@ -238,8 +238,8 @@ mod tests {
         let rust_file = FileEntry::from_path(PathBuf::from("/tmp/main.rs"));
         let text_file = FileEntry::from_path(PathBuf::from("/tmp/readme.md"));
 
-        assert_eq!(rust_file.extension_badge(), "🦀");
-        assert_eq!(text_file.extension_badge(), "M");
+        assert_eq!(rust_file.extension_badge(), "\u{e7a8}");
+        assert_eq!(text_file.extension_badge(), "\u{e73e}");
     }
 
     #[test]
@@ -247,13 +247,13 @@ mod tests {
         for name in ["track.mp3", "track.flac", "track.m4a", "track.opus", "track.mid"] {
             let entry = FileEntry::from_path(PathBuf::from("/tmp").join(name));
             assert_eq!(entry.kind, FileKind::Audio, "{name}");
-            assert_eq!(entry.extension_badge(), "♫", "{name}");
+            assert_eq!(entry.extension_badge(), "\u{ec1b}", "{name}");
         }
 
         for name in ["clip.mp4", "clip.mkv", "clip.mov", "clip.webm", "clip.m2ts"] {
             let entry = FileEntry::from_path(PathBuf::from("/tmp").join(name));
             assert_eq!(entry.kind, FileKind::Video, "{name}");
-            assert_eq!(entry.extension_badge(), "▶", "{name}");
+            assert_eq!(entry.extension_badge(), "\u{ead9}", "{name}");
         }
     }
 
@@ -262,7 +262,7 @@ mod tests {
         for name in ["main.go", "app.rb", "view.php", "Main.kt", "contract.sol", "Dockerfile"] {
             let entry = FileEntry::from_path(PathBuf::from("/tmp").join(name));
             assert_eq!(entry.kind, FileKind::Code, "{name}");
-            assert_eq!(entry.extension_badge(), "</>", "{name}");
+            assert_eq!(entry.extension_badge(), "\u{eae9}", "{name}");
         }
     }
 }

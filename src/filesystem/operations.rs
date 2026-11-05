@@ -136,3 +136,23 @@ pub fn copy_path(from: &Path, to: &Path) -> Result<(), FileSystemError> {
     }
     Ok(())
 }
+
+pub fn move_path(from: &Path, to: &Path) -> Result<(), FileSystemError> {
+    ensure_safe_path(from)?;
+    ensure_safe_path(to)?;
+    ensure_readable(from)?;
+    if to.exists() {
+        return Err(FileSystemError::OperationFailed(format!(
+            "destination already exists: {}",
+            to.display()
+        )));
+    }
+
+    match fs::rename(from, to) {
+        Ok(()) => Ok(()),
+        Err(_) => {
+            copy_path(from, to)?;
+            delete_path(from)
+        }
+    }
+}

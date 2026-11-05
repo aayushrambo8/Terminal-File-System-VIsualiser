@@ -50,7 +50,7 @@ This document records the milestones completed for the TFSV project while preser
   - `cargo build --quiet` → successful build
 
 ## Current state summary
-TFSV is now a working Rust project foundation and terminal app skeleton consistent with the original specification, but it remains a functional scaffold rather than a full production-ready file manager. The core architecture, ASCII-safe handling, and initial app shell are in place, with the next stage being the full implementation of advanced file operations, richer UI interactions, dialog flows, and deeper Linux filesystem safety checks.
+TFSV is a working terminal file browser with filesystem operations, keyboard and mouse navigation, external file opening, visible file-type icons, and a text-only interface. Unicode filenames and icons are displayed while terminal control characters in names are escaped. Normal traversal is bounded to the launching user's home directory; `sudo` launches can traverse the full filesystem. The original specification remains unchanged.
 
 ### 7. File operations milestone
 - Added real filesystem actions for create directory, rename, delete, and copy.
@@ -93,5 +93,60 @@ TFSV is now a working Rust project foundation and terminal app skeleton consiste
 - Documented SSH and multi-user usage in the project README so the app is easier to run under authenticated Linux accounts.
 - Validation evidence: `cargo test --quiet` passed with the config override regression included.
 
+### 13. Unicode text display and compact file-type icons milestone
+- Preserved Unicode filenames and visible Unicode type icons while continuing to escape control characters that could affect terminal output.
+- Added language-specific icons for recognized code formats and compact shared music (`♫`) and video (`▶`) indicators across common formats.
+- Kept the interface terminal-text based without image or background artwork.
+
+### 14. Navigation and pointer interaction polish milestone
+- Fixed Enter-based directory traversal and kept directory opening inside TFSV rather than sending directories to an external opener.
+- Added mouse capture, hover highlighting, row selection, double-click directory traversal, right-click context menu access, and wheel scrolling.
+- Kept the selected row visible while navigating and made the context menu overlay near the selected entry, clearing its area before drawing.
+- Added regression coverage for pointer traversal and context-menu positioning.
+
+### 15. Home boundary, breadcrumb, and launch behavior milestone
+- Confined normal traversal to the canonical user home directory, including protection against directory symlinks that resolve outside it.
+- Added a clickable home-relative breadcrumb beginning with the username rather than `/home/username`; breadcrumb hit-testing accounts for Unicode display width.
+- Started in the launch-time working directory when it is within the allowed root, then used a valid configured start directory, falling back to the root.
+- Allowed unrestricted traversal when launched under `sudo` and kept the invoking shell's working directory unchanged when TFSV exits.
+- Added regression coverage for the home boundary, breadcrumb navigation, symlink escape rejection, and startup path selection.
+- Fixed a breadcrumb compilation error by providing an explicit empty-path fallback and removed an unreachable duplicate left-click match arm.
+- Validation evidence: `cargo build --release --bin tfsv` passed with exit code 0; `cargo test --no-run` passed and compiled all test targets. Full test execution did not return a completion result in the terminal integration, so the suite is not recorded as passing.
+
+### 16. Clickable Places sidebar milestone
+- Replaced the static left-pane list with clickable Home, Desktop, Documents, Downloads, Music, Pictures, Videos, Public, Templates, and Trash destinations.
+- Marked unavailable destinations as disabled and highlighted the current place; exposed File System when traversal is unrestricted under `sudo`.
+- Reused the canonical navigation boundary for sidebar destinations and added regression coverage for folder rows and navigation.
+- Validation evidence: full `cargo test --quiet` passed: 15 unit tests, 2 filesystem tests, and 4 operation tests; exit code 0.
+
+### 17. Copy, cut, and paste milestone
+- Added an in-app file clipboard with Copy and Cut staging plus Paste into the current directory.
+- Added context-menu actions and `Ctrl+C`, `Ctrl+X`, and `Ctrl+V` shortcuts.
+- Added guarded move support that rejects unsafe paths and existing destinations, using copy/delete fallback when rename fails.
+- Preserved the clipboard after failed pastes and cleared it after successful cut-paste.
+- Validation evidence: full `cargo test --quiet` passed: 16 unit tests, 2 filesystem tests, and 5 operation tests; exit code 0.
+
+### 18. Header quick-action ribbon milestone
+- Added a compact, text-only action row under the app title with New, Copy, Cut, Paste, Rename, Delete, Refresh, and Sort buttons.
+- Wired mouse hit-testing and dispatch to the same file operations used by keyboard and context-menu actions.
+- Added coverage for every toolbar button's hit target and row bounds.
+- Validation evidence: full `cargo test --quiet` passed: 17 unit tests, 2 filesystem tests, and 5 operation tests; exit code 0.
+
+### 19. Non-emoji official icon glyph milestone
+- Replaced emoji file badges with Nerd Fonts Devicons for language logos and Codicons for common file categories.
+- Kept icons as single-cell text glyphs and documented the Nerd Font terminal prerequisite.
+- Validation evidence: full `cargo test --quiet` passed: 17 unit tests, 2 filesystem tests, and 5 operation tests; exit code 0.
+
+### 20. Linux installation documentation milestone
+- Added Rust/Cargo prerequisites and a user-local `cargo install --path .` setup flow to the README.
+- Documented how to launch, update, and uninstall TFSV, plus the optional Nerd Font requirement for file-type logos.
+
+### 21. Clone-to-use guide and terminal restoration milestone
+- Expanded the README with the verified GitHub clone URL, user-local installation, PATH setup, `tfsv` launch command, first-use navigation/actions, update/uninstall, and sudo traversal instructions.
+- Added an RAII terminal session guard so raw mode, mouse capture, and the alternate screen are restored on normal exit and error returns.
+- Suspend the TUI before external editors/viewers run, restore it afterward, and clear/redraw the screen so child output does not remain over the interface.
+- Added best-effort cleanup at the process error boundary and rollback for failed terminal mode transitions.
+- Validation evidence: full `cargo test --quiet` passed (17 unit, 2 filesystem, 5 operation tests); `cargo build --release --bin tfsv` completed successfully.
+
 ## Next milestones to target
-No further milestones are pending in this session.
+Wait for user approval before starting another milestone.

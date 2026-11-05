@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use tfsv::filesystem::{copy_path, create_directory, delete_path, ensure_readable, ensure_safe_path, rename_path};
+use tfsv::filesystem::{copy_path, create_directory, delete_path, ensure_readable, ensure_safe_path, move_path, rename_path};
 
 #[test]
 fn create_directory_creates_dir() {
@@ -43,6 +43,25 @@ fn copy_path_copies_directory_tree() {
     copy_path(&source, &target).unwrap();
     assert!(target.exists());
     assert!(target.join("file.txt").exists());
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn move_path_moves_item_to_destination() {
+    let root = std::env::temp_dir().join(format!("tfsv-move-{}", std::process::id()));
+    let source_dir = root.join("source");
+    let destination_dir = root.join("destination");
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&source_dir).unwrap();
+    fs::create_dir_all(&destination_dir).unwrap();
+    let source = source_dir.join("move.txt");
+    let destination = destination_dir.join("move.txt");
+    fs::write(&source, "move data").unwrap();
+
+    move_path(&source, &destination).unwrap();
+    assert!(!source.exists());
+    assert_eq!(fs::read(&destination).unwrap(), b"move data");
 
     let _ = fs::remove_dir_all(&root);
 }

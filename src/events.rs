@@ -1,8 +1,18 @@
-use crossterm::event::{KeyEvent, MouseButton, MouseEventKind};
+use crossterm::event::{KeyEvent, KeyModifiers, MouseButton, MouseEventKind};
 
 use crate::app::App;
 
 pub fn handle_key_event(app: &mut App, key: KeyEvent) -> Result<bool, std::io::Error> {
+    if key.modifiers.contains(KeyModifiers::CONTROL) {
+        match key.code {
+            crossterm::event::KeyCode::Char('c') => app.copy_selected(),
+            crossterm::event::KeyCode::Char('x') => app.cut_selected(),
+            crossterm::event::KeyCode::Char('v') => app.paste_clipboard(),
+            _ => {}
+        }
+        return Ok(false);
+    }
+
     match key.code {
         crossterm::event::KeyCode::Char('q') => return Ok(true),
         crossterm::event::KeyCode::Char('j') | crossterm::event::KeyCode::Down if app.is_context_menu_open() => {
@@ -34,7 +44,7 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) -> Result<bool, std::io::E
         crossterm::event::KeyCode::Char('d') => app.delete_selected(),
         crossterm::event::KeyCode::Char('c') => app.toggle_context_menu(),
         crossterm::event::KeyCode::Enter if app.is_context_menu_open() => app.apply_context_menu(),
-        crossterm::event::KeyCode::Enter => app.apply_context_menu(),
+        crossterm::event::KeyCode::Enter => app.open_selected(),
         crossterm::event::KeyCode::Esc => {
             if app.is_context_menu_open() {
                 app.close_context_menu();
@@ -48,8 +58,23 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) -> Result<bool, std::io::E
 }
 
 pub fn handle_mouse_event(app: &mut App, mouse: crossterm::event::MouseEvent) {
-    if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
-        let row = mouse.row.saturating_sub(4) as usize;
-        app.select_index(row);
+    match mouse.kind {
+        MouseEventKind::Down(MouseButton::Left) => {
+            if !app.pointer_toolbar(mouse.column, mouse.row)
+                && !app.pointer_place(mouse.column, mouse.row)
+                && !app.pointer_breadcrumb(mouse.column, mouse.row)
+            {
+                app.pointer_click(mouse.column, mouse.row);
+            }
+        }
+        MouseEventKind::Moved | MouseEventKind::Drag(MouseButton::Left) => {
+            app.pointer_move(mouse.column, mouse.row);
+        }
+        MouseEventKind::Down(MouseButton::Right) => {
+            app.pointer_context_menu(mouse.column, mouse.row)
+        }
+        MouseEventKind::ScrollDown => app.pointer_scroll(mouse.column, mouse.row, 3),
+        MouseEventKind::ScrollUp => app.pointer_scroll(mouse.column, mouse.row, -3),
+        _ => {}
     }
 }
