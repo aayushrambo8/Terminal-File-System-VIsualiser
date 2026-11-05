@@ -148,5 +148,12 @@ TFSV is a working terminal file browser with filesystem operations, keyboard and
 - Added best-effort cleanup at the process error boundary and rollback for failed terminal mode transitions.
 - Validation evidence: full `cargo test --quiet` passed (17 unit, 2 filesystem, 5 operation tests); `cargo build --release --bin tfsv` completed successfully.
 
+### 22. Post-clone installer milestone
+- Added executable `install.sh` to build the release binary and install it as `~/.local/bin/tfsv`.
+- Added idempotent PATH setup for the detected shell startup file; the app is a real executable named `tfsv`, not a shell alias.
+- Added stable-toolchain selection guidance without automatically starting rustup downloads.
+- Updated the README with the clone/install flow and accurate update/uninstall instructions.
+- Validation: shell syntax and editor diagnostics pass. Full tests and release build passed before the installer-only follow-up. Isolated installer execution could not complete in this environment because rustup has no default toolchain selected; README documents `rustup default stable` as the one-time setup.
+
 ## Next milestones to target
 Wait for user approval before starting another milestone.

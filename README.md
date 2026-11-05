@@ -20,12 +20,12 @@ Clone, install, and launch TFSV:
 ```bash
 git clone https://github.com/aayushrambo8/Terminal-File-System-VIsualiser.git
 cd Terminal-File-System-VIsualiser
-cargo install --path .
-export PATH="$HOME/.cargo/bin:$PATH"
-tfsv
+./install.sh
 ```
 
-To make the PATH change permanent, add `export PATH="$HOME/.cargo/bin:$PATH"` to your shell profile (`~/.profile`, `~/.bashrc`, or `~/.zshrc`). After installation, run `tfsv` from any directory. It starts in the launch directory if it is within your home directory; normal launches cannot navigate outside home.
+The installer builds the release binary, puts it in `~/.local/bin/tfsv`, and adds `~/.local/bin` to your Bash, Zsh, or POSIX shell startup file without adding duplicate entries. It does not create an alias: `tfsv` is the actual executable, so it works consistently in scripts and with `sudo`. The installer prints the exact command to launch it immediately; open a new terminal (or source the printed startup file) to use `tfsv` by name. After that, run `tfsv` from any directory. It starts in the launch directory if it is within your home directory; normal launches cannot navigate outside home.
+
+If the installer says no Rust toolchain is selected, run `rustup default stable` once, then rerun `./install.sh`.
 
 To allow traversal outside home, run `sudo "$(command -v tfsv)"`. Exiting returns to the shell's original directory. Directory navigation happens inside TFSV.
 
@@ -42,10 +42,10 @@ To update, enter the cloned repository, pull changes, and reinstall:
 ```bash
 cd ~/Terminal-File-System-VIsualiser
 git pull
-cargo install --path . --force
+./install.sh
 ```
 
-To uninstall, run `cargo uninstall tfsv`.
+To uninstall the executable, run `rm -f "$HOME/.local/bin/tfsv"`. The PATH entry added during installation is harmless and can be removed from your shell startup file if desired.
 
 The interface works in a regular text terminal. Select a Nerd Font (such as MesloLGS NF or FiraCode Nerd Font) to see file-type logos correctly; without one, some icons may appear as empty boxes.
 
@@ -91,4 +91,3 @@ This keeps per-user or per-deployment settings isolated and avoids shared-state 
 ## SSH / multi-user usage
 
 TFSV is designed for authenticated Linux sessions over SSH. Launch it under the user account that should own the file system session, and keep configuration isolated per user with `TFSV_CONFIG_DIR` when needed.
-# Terminal-File-System-VIsualiser
