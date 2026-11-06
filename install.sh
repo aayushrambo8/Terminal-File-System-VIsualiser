@@ -19,15 +19,34 @@ case "$SHELL_NAME" in
 esac
 
 if ! command -v cargo >/dev/null 2>&1; then
-    printf '%s\n' "Rust/Cargo was not found. Install Rust from https://rustup.rs, open a new terminal, and run ./install.sh again." >&2
-    exit 1
+    printf '%s\n' "Rust/Cargo was not found. Installing the stable Rust toolchain..."
+    if command -v curl >/dev/null 2>&1; then
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+    elif command -v wget >/dev/null 2>&1; then
+        wget -qO- https://sh.rustup.rs | sh -s -- -y --profile minimal
+    else
+        printf '%s\n' "Rust installation requires curl or wget. Install one, then rerun ./install.sh." >&2
+        exit 1
+    fi
+
+    if [ -f "$HOME/.cargo/env" ]; then
+        . "$HOME/.cargo/env"
+    else
+        PATH="$HOME/.cargo/bin:$PATH"
+        export PATH
+    fi
+
+    if ! command -v cargo >/dev/null 2>&1; then
+        printf '%s\n' "Rust installation completed, but Cargo is not available in this shell." >&2
+        exit 1
+    fi
 fi
 
 if command -v rustup >/dev/null 2>&1; then
     ACTIVE_TOOLCHAIN=$(rustup show active-toolchain 2>/dev/null || true)
     if [ -z "$ACTIVE_TOOLCHAIN" ] && [ -z "${RUSTUP_TOOLCHAIN:-}" ]; then
-        printf '%s\n' "Rust is installed but no default toolchain is selected. Run 'rustup default stable', then rerun ./install.sh." >&2
-        exit 1
+        printf '%s\n' "No default Rust toolchain is selected. Installing stable..."
+        rustup default stable
     fi
 fi
 

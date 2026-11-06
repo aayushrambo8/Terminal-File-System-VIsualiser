@@ -8,12 +8,7 @@ TFSV is designed to run inside an SSH session and provide a terminal-native file
 
 ## Install on Linux
 
-Requirements: Git and Rust/Cargo 1.85 or newer. Install Rust with rustup if it is not already available:
-
-```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source "$HOME/.cargo/env"
-```
+Requirements: Git plus either `curl` or `wget`. The installer automatically installs the minimal stable Rust toolchain with Rustup when Cargo is unavailable.
 
 Clone, install, and launch TFSV:
 
@@ -25,7 +20,7 @@ cd Terminal-File-System-VIsualiser
 
 The installer builds the release binary, puts it in `~/.local/bin/tfsv`, and adds `~/.local/bin` to your Bash, Zsh, or POSIX shell startup file without adding duplicate entries. It does not create an alias: `tfsv` is the actual executable, so it works consistently in scripts and with `sudo`. The installer prints the exact command to launch it immediately; open a new terminal (or source the printed startup file) to use `tfsv` by name. After that, run `tfsv` from any directory. It starts in the launch directory if it is within your home directory; normal launches cannot navigate outside home.
 
-If the installer says no Rust toolchain is selected, run `rustup default stable` once, then rerun `./install.sh`.
+If Rustup has no active toolchain, the installer selects the stable toolchain automatically.
 
 To allow traversal outside home, run `sudo "$(command -v tfsv)"`. Exiting returns to the shell's original directory. Directory navigation happens inside TFSV.
 
