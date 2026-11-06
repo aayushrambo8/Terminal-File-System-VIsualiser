@@ -3,7 +3,13 @@ set -eu
 
 APP_NAME=tfsv
 REPO_DIR=$(cd -- "$(dirname -- "$0")" && pwd -P)
-INSTALL_DIR=${TFSV_INSTALL_DIR:-"$HOME/.local/bin"}
+USER_ID=$(id -u)
+if [ "$USER_ID" -eq 0 ] && [ -z "${TFSV_INSTALL_DIR+x}" ]; then
+    INSTALL_DIR=/usr/local/bin
+else
+    INSTALL_DIR=${TFSV_INSTALL_DIR:-"$HOME/.local/bin"}
+fi
+SHARED_BIN_DIR=${TFSV_SHARED_BIN_DIR:-/usr/local/bin}
 SHELL_NAME=$(basename -- "${SHELL:-sh}")
 
 case "$SHELL_NAME" in
@@ -57,24 +63,41 @@ if ! (cd "$REPO_DIR" && cargo build --release --bin "$APP_NAME"); then
 fi
 
 mkdir -p "$INSTALL_DIR"
+INSTALL_DIR=$(cd "$INSTALL_DIR" && pwd -P)
 install -m 0755 "$REPO_DIR/target/release/$APP_NAME" "$INSTALL_DIR/$APP_NAME"
 
-PATH_LINE="export PATH=\"$INSTALL_DIR:\$PATH\""
-if ! grep -Fqx "$PATH_LINE" "$SHELL_RC" 2>/dev/null; then
-    mkdir -p "$(dirname -- "$SHELL_RC")"
-    {
-        printf '\n%s\n' '# TFSV user-local command'
-        printf '%s\n' "$PATH_LINE"
-    } >> "$SHELL_RC"
-fi
+if [ "$USER_ID" -eq 0 ]; then
+    chmod a+rx "$INSTALL_DIR"
+    mkdir -p "$SHARED_BIN_DIR"
+    chmod a+rx "$SHARED_BIN_DIR"
+    SHARED_BIN_DIR=$(cd "$SHARED_BIN_DIR" && pwd -P)
+    if [ "$INSTALL_DIR" != "$SHARED_BIN_DIR" ]; then
+        ln -sfn "$INSTALL_DIR/$APP_NAME" "$SHARED_BIN_DIR/$APP_NAME"
+    fi
+    COMMAND_PATH="$SHARED_BIN_DIR/$APP_NAME"
+else
+    PATH_LINE="export PATH=\"$INSTALL_DIR:\$PATH\""
+    if ! grep -Fqx "$PATH_LINE" "$SHELL_RC" 2>/dev/null; then
+        mkdir -p "$(dirname -- "$SHELL_RC")"
+        {
+            printf '\n%s\n' '# TFSV user-local command'
+            printf '%s\n' "$PATH_LINE"
+        } >> "$SHELL_RC"
+    fi
 
-case ":$PATH:" in
-    *":$INSTALL_DIR:"*) ;;
-    *) PATH="$INSTALL_DIR:$PATH" ;;
-esac
-export PATH
+    case ":$PATH:" in
+        *":$INSTALL_DIR:"*) ;;
+        *) PATH="$INSTALL_DIR:$PATH" ;;
+    esac
+    export PATH
+    COMMAND_PATH="$INSTALL_DIR/$APP_NAME"
+fi
 
 printf '\n%s\n' "TFSV is installed at $INSTALL_DIR/$APP_NAME."
 printf '%s\n' "This shell can launch it now with: $INSTALL_DIR/$APP_NAME"
-printf '%s\n' "Open a new terminal (or run: . \"$SHELL_RC\") to use: tfsv"
+if [ "$USER_ID" -eq 0 ]; then
+    printf '%s\n' "All users can run: $COMMAND_PATH"
+else
+    printf '%s\n' "Open a new terminal (or run: . \"$SHELL_RC\") to use: tfsv"
+fi
 printf '%s\n' "Run 'tfsv' from any directory to browse."

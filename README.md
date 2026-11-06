@@ -18,7 +18,13 @@ cd Terminal-File-System-VIsualiser
 ./install.sh
 ```
 
-The installer builds the release binary, puts it in `~/.local/bin/tfsv`, and adds `~/.local/bin` to your Bash, Zsh, or POSIX shell startup file without adding duplicate entries. It does not create an alias: `tfsv` is the actual executable, so it works consistently in scripts and with `sudo`. The installer prints the exact command to launch it immediately; open a new terminal (or source the printed startup file) to use `tfsv` by name. After that, run `tfsv` from any directory. It starts in the launch directory if it is within your home directory; normal launches cannot navigate outside home.
+When run as a regular user, the installer puts the binary in `~/.local/bin/tfsv` and adds that directory to the user's shell startup file. When run as root, it installs to `/usr/local/bin/tfsv` so every user can run `tfsv`. It does not create an alias: `tfsv` is the actual executable, so it works consistently in scripts and with `sudo`.
+
+To keep the binary under `/home/opt` while making it available to all users, run the installer as root. It creates a `/usr/local/bin/tfsv` launcher, which is normally on every user's `PATH`:
+
+```bash
+sudo env TFSV_INSTALL_DIR=/home/opt ./install.sh
+```
 
 If Rustup has no active toolchain, the installer selects the stable toolchain automatically.
 
