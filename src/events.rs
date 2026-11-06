@@ -39,6 +39,7 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) -> Result<bool, std::io::E
         }
         crossterm::event::KeyCode::Char('r') => app.refresh(),
         crossterm::event::KeyCode::Char('s') => app.cycle_sort(),
+        crossterm::event::KeyCode::Char('.') => app.toggle_hidden(),
         crossterm::event::KeyCode::Char('n') => app.create_directory("new-folder"),
         crossterm::event::KeyCode::Char('m') => app.rename_selected("renamed-item"),
         crossterm::event::KeyCode::Char('d') => app.delete_selected(),

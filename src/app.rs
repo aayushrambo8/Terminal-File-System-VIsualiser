@@ -1,6 +1,5 @@
 use std::cell::Cell;
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
 
 use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind};
 use crossterm::execute;
@@ -76,10 +75,11 @@ enum ToolbarAction {
     Delete,
     Refresh,
     Sort,
+    Hidden,
 }
 
 impl ToolbarAction {
-    const ALL: [Self; 8] = [
+    const ALL: [Self; 9] = [
         Self::New,
         Self::Copy,
         Self::Cut,
@@ -88,6 +88,7 @@ impl ToolbarAction {
         Self::Delete,
         Self::Refresh,
         Self::Sort,
+        Self::Hidden,
     ];
 
     fn label(self) -> &'static str {
@@ -100,6 +101,7 @@ impl ToolbarAction {
             Self::Delete => "Delete",
             Self::Refresh => "Refresh",
             Self::Sort => "Sort",
+            Self::Hidden => "Hidden",
         }
     }
 }
@@ -124,7 +126,6 @@ pub struct App {
     list_area: Cell<Rect>,
     breadcrumb_area: Cell<Rect>,
     hovered_entry: Cell<Option<usize>>,
-    last_click: Cell<Option<(usize, Instant)>>,
     screen_invalidated: bool,
 }
 
@@ -166,7 +167,6 @@ impl App {
             list_area: Cell::new(Rect::default()),
             breadcrumb_area: Cell::new(Rect::default()),
             hovered_entry: Cell::new(None),
-            last_click: Cell::new(None),
             screen_invalidated: false,
         };
         app.refresh();
@@ -207,11 +207,13 @@ impl App {
 
     pub fn refresh(&mut self) {
         let mut entries = load_directory(&self.current_dir).unwrap_or_default();
+        if !self.settings.show_hidden {
+            entries.retain(|entry| !entry.name.starts_with('.'));
+        }
         sort_entries(&mut entries, self.sort_mode);
         self.entries = entries;
         self.selected = self.selected.min(self.entries.len().saturating_sub(1));
         self.hovered_entry.set(None);
-        self.last_click.set(None);
         self.status = format!("Browsing {}", self.current_dir.display());
     }
 
@@ -266,21 +268,10 @@ impl App {
 
     pub fn pointer_click(&mut self, column: u16, row: u16) {
         let Some(index) = self.entry_at_position(column, row) else {
-            self.last_click.set(None);
             return;
         };
         self.select_index(index);
-        let now = Instant::now();
-        let double_click = self
-            .last_click
-            .get()
-            .is_some_and(|(previous, time)| previous == index && now.duration_since(time) <= Duration::from_millis(450));
-        if double_click {
-            self.last_click.set(None);
-            self.open_selected();
-        } else {
-            self.last_click.set(Some((index, now)));
-        }
+        self.open_selected();
     }
 
     pub fn pointer_context_menu(&mut self, column: u16, row: u16) {
@@ -383,6 +374,7 @@ impl App {
             ToolbarAction::Delete => self.delete_selected(),
             ToolbarAction::Refresh => self.refresh(),
             ToolbarAction::Sort => self.cycle_sort(),
+            ToolbarAction::Hidden => self.toggle_hidden(),
         }
         true
     }
@@ -409,6 +401,10 @@ impl App {
     }
 
     fn navigate_to(&mut self, path: PathBuf) {
+        self.navigate_to_with_selection(path, None);
+    }
+
+    fn navigate_to_with_selection(&mut self, path: PathBuf, selected_name: Option<&std::ffi::OsStr>) {
         let Ok(path) = path.canonicalize() else {
             self.status = format!("Cannot open {}", path.display());
             return;
@@ -424,6 +420,11 @@ impl App {
         self.current_dir = path;
         self.selected = 0;
         self.refresh();
+        if let Some(name) = selected_name {
+            if let Some(index) = self.entries.iter().position(|entry| entry.path.file_name() == Some(name)) {
+                self.selected = index;
+            }
+        }
     }
 
     pub fn page_down(&mut self, lines: usize) {
@@ -470,9 +471,10 @@ impl App {
             self.status = "Traversal root reached".to_string();
             return;
         }
+        let selected_name = self.current_dir.file_name().map(|name| name.to_os_string());
         if let Some(parent) = self.current_dir.parent() {
             if self.unrestricted || parent.starts_with(&self.home_dir) {
-                self.navigate_to(parent.to_path_buf());
+                self.navigate_to_with_selection(parent.to_path_buf(), selected_name.as_deref());
             }
         }
     }
@@ -484,6 +486,16 @@ impl App {
             SortMode::Size => SortMode::Name,
         };
         self.refresh();
+    }
+
+    pub fn toggle_hidden(&mut self) {
+        self.settings.show_hidden = !self.settings.show_hidden;
+        self.refresh();
+        self.status = if self.settings.show_hidden {
+            "Showing hidden items".to_string()
+        } else {
+            "Hiding hidden items".to_string()
+        };
     }
 
     pub fn create_directory(&mut self, name: &str) {
@@ -681,11 +693,10 @@ impl App {
             .constraints([Constraint::Length(3), Constraint::Length(1)])
             .split(outer[0]);
 
-        let user = std::env::var("USER").unwrap_or_else(|_| String::from("root"));
         let header = Paragraph::new(Line::from(vec![
             Span::styled("TFSV - Terminal File System Visualiser", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
             Span::raw("  "),
-            Span::raw(format!("USER: {user}")),
+            Span::raw(format!("by github.com/aayushrambo8")),
         ]))
         .block(Block::default().borders(Borders::ALL).title("tfsv"));
         frame.render_widget(header, header_rows[0]);
@@ -767,7 +778,7 @@ impl App {
 
         let footer = Paragraph::new(vec![
             Line::from(self.status.as_str()),
-            Line::from("Enter/l open  Ctrl+C copy  Ctrl+X cut  Ctrl+V paste  h/Left up  Wheel scroll  c/Right-click menu  q quit"),
+            Line::from("Enter/l open  h/Left up  . hidden  Home/End jump  PgUp/PgDn page  Ctrl+C copy  Ctrl+X cut  Ctrl+V paste  Wheel scroll  c/Right-click menu  q quit"),
         ])
             .block(Block::default().borders(Borders::ALL));
         frame.render_widget(footer, outer[2]);
@@ -954,7 +965,6 @@ mod tests {
             list_area: Cell::new(Rect::default()),
             breadcrumb_area: Cell::new(Rect::default()),
             hovered_entry: Cell::new(None),
-            last_click: Cell::new(None),
             screen_invalidated: false,
         };
 
@@ -964,6 +974,8 @@ mod tests {
         assert_eq!(app.selected, 1);
         app.move_to_end();
         assert_eq!(app.selected, app.entries.len() - 1);
+        app.move_to_start();
+        assert_eq!(app.selected, 0);
     }
 
     #[test]
@@ -992,7 +1004,6 @@ mod tests {
             list_area: Cell::new(Rect::default()),
             breadcrumb_area: Cell::new(Rect::default()),
             hovered_entry: Cell::new(None),
-            last_click: Cell::new(None),
             screen_invalidated: false,
         };
 
@@ -1025,7 +1036,6 @@ mod tests {
             list_area: Cell::new(Rect::default()),
             breadcrumb_area: Cell::new(Rect::default()),
             hovered_entry: Cell::new(None),
-            last_click: Cell::new(None),
             screen_invalidated: false,
         };
 
@@ -1073,7 +1083,6 @@ mod tests {
             list_area: Cell::new(Rect::default()),
             breadcrumb_area: Cell::new(Rect::default()),
             hovered_entry: Cell::new(None),
-            last_click: Cell::new(None),
             screen_invalidated: false,
         };
 
@@ -1107,7 +1116,9 @@ mod tests {
             .as_nanos();
         let root = std::env::temp_dir().join(format!("tfsv-navigation-{}-{unique}", std::process::id()));
         let nested = root.join("nested");
+        let hidden = root.join(".hidden");
         std::fs::create_dir_all(&nested).unwrap();
+        std::fs::create_dir_all(&hidden).unwrap();
 
         let mut app = App {
             settings: Settings::default(),
@@ -1129,7 +1140,6 @@ mod tests {
             list_area: Cell::new(Rect::default()),
             breadcrumb_area: Cell::new(Rect::default()),
             hovered_entry: Cell::new(None),
-            last_click: Cell::new(None),
             screen_invalidated: false,
         };
         app.refresh();
@@ -1147,6 +1157,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(app.current_dir, root);
+        assert_eq!(app.entries[app.selected].path, nested);
+        assert!(!app.entries.iter().any(|entry| entry.path == hidden));
+        app.toggle_hidden();
+        assert!(app.entries.iter().any(|entry| entry.path == hidden));
 
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -1249,7 +1263,6 @@ mod tests {
             list_area: Cell::new(Rect::default()),
             breadcrumb_area: Cell::new(Rect::new(5, 3, 60, 1)),
             hovered_entry: Cell::new(None),
-            last_click: Cell::new(None),
             screen_invalidated: false,
         };
 
@@ -1290,7 +1303,7 @@ mod tests {
     }
 
     #[test]
-    fn hover_highlights_directory_and_double_click_enters_it()
+    fn mouse_click_opens_selected_directory()
     {
         use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -1322,7 +1335,6 @@ mod tests {
             list_area: Cell::new(Rect::new(10, 2, 40, 8)),
             breadcrumb_area: Cell::new(Rect::default()),
             hovered_entry: Cell::new(None),
-            last_click: Cell::new(None),
             screen_invalidated: false,
         };
 
@@ -1330,8 +1342,6 @@ mod tests {
         assert_eq!(app.hovered_entry.get(), Some(0));
         assert!(app.status.contains("nested"));
 
-        app.pointer_click(11, 4);
-        assert_eq!(app.current_dir, root);
         app.pointer_click(11, 4);
         assert_eq!(app.current_dir, nested);
 
