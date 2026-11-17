@@ -18,11 +18,11 @@ impl OpenersConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Settings {
     pub start_dir: PathBuf,
     pub show_hidden: bool,
     pub theme_name: String,
-    #[serde(default)]
     pub openers: OpenersConfig,
 }
 
@@ -59,16 +59,24 @@ impl Settings {
         Self::config_dir().join("settings.toml")
     }
 
-    pub fn load() -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn load() -> Self {
         let path = Self::config_path();
         if !path.exists() {
-            let settings = Self::default();
-            settings.save()?;
-            return Ok(settings);
+            return Self::default();
         }
-        let content = fs::read_to_string(path)?;
-        let settings: Self = toml::from_str(&content)?;
-        Ok(settings)
+        match fs::read_to_string(&path) {
+            Ok(content) => match toml::from_str::<Self>(&content) {
+                Ok(settings) => settings,
+                Err(err) => {
+                    eprintln!(
+                        "Warning: failed to parse settings at {}: {err}. Using default settings.",
+                        path.display()
+                    );
+                    Self::default()
+                }
+            },
+            Err(_) => Self::default(),
+        }
     }
 
     pub fn save(&self) -> Result<(), Box<dyn std::error::Error>> {
@@ -81,14 +89,68 @@ impl Settings {
 }
 
 #[cfg(test)]
+pub(crate) static TEST_CONFIG_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
 mod tests {
     use super::Settings;
+    use super::TEST_CONFIG_MUTEX;
+
+    #[test]
+    fn settings_save_and_load_roundtrip() {
+        let _guard = TEST_CONFIG_MUTEX.lock().unwrap();
+        let key = "TFSV_CONFIG_DIR";
+        let previous = std::env::var(key).ok();
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let target = std::env::temp_dir().join(format!(
+            "tfsv-settings-test-{}-{unique}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&target);
+
+        unsafe {
+            std::env::set_var(key, &target);
+        }
+
+        let settings = Settings {
+            show_hidden: true,
+            ..Default::default()
+        };
+        settings.save().unwrap();
+
+        let loaded = Settings::load();
+        assert!(loaded.show_hidden);
+
+        // Verify malformed settings fallback to default without crashing
+        std::fs::write(Settings::config_path(), "invalid toml syntax [[[").unwrap();
+        let fallback = Settings::load();
+        assert!(!fallback.show_hidden);
+
+        unsafe {
+            match previous {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+        let _ = std::fs::remove_dir_all(&target);
+    }
 
     #[test]
     fn config_dir_honors_environment_override() {
+        let _guard = TEST_CONFIG_MUTEX.lock().unwrap();
         let key = "TFSV_CONFIG_DIR";
         let previous = std::env::var(key).ok();
-        let target = std::env::temp_dir().join(format!("tfsv-config-override-{}", std::process::id()));
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let target = std::env::temp_dir().join(format!(
+            "tfsv-config-override-{}-{unique}",
+            std::process::id()
+        ));
 
         unsafe {
             std::env::set_var(key, &target);

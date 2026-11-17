@@ -30,7 +30,7 @@ fn split_command(command: &str) -> Vec<String> {
 }
 
 pub fn detect_opener(path: &Path) -> Vec<String> {
-    let settings = Settings::load().unwrap_or_default();
+    let settings = Settings::load();
     let lower = path
         .file_name()
         .and_then(|s| s.to_str())
@@ -56,9 +56,19 @@ mod tests {
 
     #[test]
     fn text_files_use_editor_command() {
+        let _guard = crate::config::settings::TEST_CONFIG_MUTEX.lock().unwrap();
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let temp_dir =
+            std::env::temp_dir().join(format!("tfsv-test-config-{}-{unique}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let prev_config = std::env::var("TFSV_CONFIG_DIR").ok();
         let key = "EDITOR";
         let previous = std::env::var(key).ok();
         unsafe {
+            std::env::set_var("TFSV_CONFIG_DIR", &temp_dir);
             std::env::set_var(key, "code --wait");
         }
 
@@ -70,7 +80,12 @@ mod tests {
                 Some(value) => std::env::set_var(key, value),
                 None => std::env::remove_var(key),
             }
+            match prev_config {
+                Some(value) => std::env::set_var("TFSV_CONFIG_DIR", value),
+                None => std::env::remove_var("TFSV_CONFIG_DIR"),
+            }
         }
+        let _ = std::fs::remove_dir_all(temp_dir);
     }
 
     #[test]

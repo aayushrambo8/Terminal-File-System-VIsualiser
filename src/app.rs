@@ -3,17 +3,22 @@ use std::path::PathBuf;
 
 use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind};
 use crossterm::execute;
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
+use crossterm::terminal::{
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+};
+use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Row, Table};
-use ratatui::Terminal;
 
 use crate::config::Settings;
 use crate::events::{handle_key_event, handle_mouse_event};
-use crate::filesystem::{create_directory as fs_create_directory, copy_path, delete_path, load_directory, move_path, rename_path, sort_entries, FileEntry, SortMode};
+use crate::filesystem::{
+    FileEntry, SortMode, copy_path, create_directory as fs_create_directory, delete_path,
+    load_directory, move_path, rename_path, sort_entries,
+};
 
 struct TerminalSession {
     active: bool,
@@ -41,7 +46,6 @@ impl TerminalSession {
         self.active = false;
         Ok(())
     }
-
 }
 
 impl Drop for TerminalSession {
@@ -106,6 +110,8 @@ impl ToolbarAction {
     }
 }
 
+pub use crate::components::{InputDialog, InputMode};
+
 pub struct App {
     settings: Settings,
     home_dir: PathBuf,
@@ -120,6 +126,7 @@ pub struct App {
     context_menu_items: Vec<&'static str>,
     clipboard: Option<FileClipboard>,
     dialog_message: Option<String>,
+    input_dialog: Option<InputDialog>,
     visible_start: Cell<usize>,
     toolbar_area: Cell<Rect>,
     places_area: Cell<Rect>,
@@ -131,22 +138,18 @@ pub struct App {
 
 impl App {
     pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
-        let settings = Settings::load()?;
-        let unrestricted = std::env::var_os("SUDO_UID").is_some();
+        let settings = Settings::load();
+        let unrestricted = is_unrestricted_user();
         let home_dir = if unrestricted {
             PathBuf::from("/")
         } else {
             dirs::home_dir()
+                .and_then(|h| h.canonicalize().ok())
                 .unwrap_or_else(|| PathBuf::from("/"))
-                .canonicalize()?
         };
         let launch_dir = std::env::current_dir().ok();
-        let current_dir = resolve_start_directory(
-            &home_dir,
-            launch_dir,
-            &settings.start_dir,
-            unrestricted,
-        );
+        let current_dir =
+            resolve_start_directory(&home_dir, launch_dir, &settings.start_dir, unrestricted);
         let mut app = Self {
             settings,
             home_dir,
@@ -158,9 +161,18 @@ impl App {
             status: String::from("TFSV ready"),
             context_menu_open: false,
             context_menu_index: 0,
-            context_menu_items: vec!["Open", "Copy", "Cut", "Paste", "Rename", "Delete", "Properties"],
+            context_menu_items: vec![
+                "Open",
+                "Copy",
+                "Cut",
+                "Paste",
+                "Rename",
+                "Delete",
+                "Properties",
+            ],
             clipboard: None,
             dialog_message: None,
+            input_dialog: None,
             visible_start: Cell::new(0),
             toolbar_area: Cell::new(Rect::default()),
             places_area: Cell::new(Rect::default()),
@@ -233,10 +245,6 @@ impl App {
         self.selected = index.min(self.entries.len().saturating_sub(1));
     }
 
-    pub fn select_visible_index(&mut self, index: usize) {
-        self.select_index(self.visible_start.get().saturating_add(index));
-    }
-
     fn entry_at_position(&self, column: u16, row: u16) -> Option<usize> {
         let area = self.list_area.get();
         let content_top = area.y.saturating_add(2);
@@ -249,7 +257,10 @@ impl App {
             return None;
         }
 
-        let index = self.visible_start.get().saturating_add((row - content_top) as usize);
+        let index = self
+            .visible_start
+            .get()
+            .saturating_add((row - content_top) as usize);
         (index < self.entries.len()).then_some(index)
     }
 
@@ -259,7 +270,11 @@ impl App {
             self.status = hovered
                 .map(|index| {
                     let entry = &self.entries[index];
-                    let kind = if entry.path.is_dir() { "Directory" } else { "File" };
+                    let kind = if entry.path.is_dir() {
+                        "Directory"
+                    } else {
+                        "File"
+                    };
                     format!("{kind}: {}", entry.display_name)
                 })
                 .unwrap_or_else(|| format!("Browsing {}", self.current_dir.display()));
@@ -315,9 +330,9 @@ impl App {
             .unwrap_or_default()
             .to_string_lossy()
             .into_owned();
-        let mut segment_end = area.x.saturating_add(
-            unicode_width::UnicodeWidthStr::width(username.as_str()) as u16,
-        );
+        let mut segment_end = area
+            .x
+            .saturating_add(unicode_width::UnicodeWidthStr::width(username.as_str()) as u16);
         if column <= segment_end {
             self.navigate_to(self.home_dir.clone());
             return true;
@@ -327,7 +342,8 @@ impl App {
         for component in components {
             target.push(&component);
             segment_end = segment_end.saturating_add(
-                1 + unicode_width::UnicodeWidthStr::width(component.to_string_lossy().as_ref()) as u16,
+                1 + unicode_width::UnicodeWidthStr::width(component.to_string_lossy().as_ref())
+                    as u16,
             );
             if column <= segment_end {
                 self.navigate_to(target);
@@ -366,12 +382,12 @@ impl App {
             return false;
         };
         match action {
-            ToolbarAction::New => self.create_directory("new-folder"),
+            ToolbarAction::New => self.prompt_create_directory(),
             ToolbarAction::Copy => self.copy_selected(),
             ToolbarAction::Cut => self.cut_selected(),
             ToolbarAction::Paste => self.paste_clipboard(),
-            ToolbarAction::Rename => self.rename_selected("renamed-item"),
-            ToolbarAction::Delete => self.delete_selected(),
+            ToolbarAction::Rename => self.prompt_rename_selected(),
+            ToolbarAction::Delete => self.prompt_delete_selected(),
             ToolbarAction::Refresh => self.refresh(),
             ToolbarAction::Sort => self.cycle_sort(),
             ToolbarAction::Hidden => self.toggle_hidden(),
@@ -404,7 +420,11 @@ impl App {
         self.navigate_to_with_selection(path, None);
     }
 
-    fn navigate_to_with_selection(&mut self, path: PathBuf, selected_name: Option<&std::ffi::OsStr>) {
+    fn navigate_to_with_selection(
+        &mut self,
+        path: PathBuf,
+        selected_name: Option<&std::ffi::OsStr>,
+    ) {
         let Ok(path) = path.canonicalize() else {
             self.status = format!("Cannot open {}", path.display());
             return;
@@ -421,7 +441,11 @@ impl App {
         self.selected = 0;
         self.refresh();
         if let Some(name) = selected_name {
-            if let Some(index) = self.entries.iter().position(|entry| entry.path.file_name() == Some(name)) {
+            if let Some(index) = self
+                .entries
+                .iter()
+                .position(|entry| entry.path.file_name() == Some(name))
+            {
                 self.selected = index;
             }
         }
@@ -475,6 +499,8 @@ impl App {
         if let Some(parent) = self.current_dir.parent() {
             if self.unrestricted || parent.starts_with(&self.home_dir) {
                 self.navigate_to_with_selection(parent.to_path_buf(), selected_name.as_deref());
+            } else {
+                self.navigate_to_with_selection(self.home_dir.clone(), None);
             }
         }
     }
@@ -490,6 +516,7 @@ impl App {
 
     pub fn toggle_hidden(&mut self) {
         self.settings.show_hidden = !self.settings.show_hidden;
+        let _ = self.settings.save();
         self.refresh();
         self.status = if self.settings.show_hidden {
             "Showing hidden items".to_string()
@@ -522,18 +549,151 @@ impl App {
         }
     }
 
+    pub fn prompt_rename_selected(&mut self) {
+        if self.entries.is_empty() {
+            self.status = "No item selected to rename".to_string();
+            return;
+        }
+        let target = self.entries[self.selected].path.clone();
+        let current_name = target
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string();
+        self.input_dialog = Some(InputDialog::new(
+            "Rename Item",
+            "Enter new name:",
+            current_name,
+            InputMode::Rename { target },
+        ));
+    }
+
+    pub fn prompt_create_directory(&mut self) {
+        self.input_dialog = Some(InputDialog::new(
+            "New Directory",
+            "Enter directory name:",
+            "",
+            InputMode::NewFolder,
+        ));
+    }
+
+    pub fn is_input_dialog_open(&self) -> bool {
+        self.input_dialog.is_some()
+    }
+
+    pub fn close_input_dialog(&mut self) {
+        self.input_dialog = None;
+    }
+
+    pub fn input_insert_char(&mut self, ch: char) {
+        if let Some(dialog) = &mut self.input_dialog {
+            dialog.insert_char(ch);
+        }
+    }
+
+    pub fn input_backspace(&mut self) {
+        if let Some(dialog) = &mut self.input_dialog {
+            dialog.backspace();
+        }
+    }
+
+    pub fn input_delete(&mut self) {
+        if let Some(dialog) = &mut self.input_dialog {
+            dialog.delete();
+        }
+    }
+
+    pub fn input_cursor_left(&mut self) {
+        if let Some(dialog) = &mut self.input_dialog {
+            dialog.cursor_left();
+        }
+    }
+
+    pub fn input_cursor_right(&mut self) {
+        if let Some(dialog) = &mut self.input_dialog {
+            dialog.cursor_right();
+        }
+    }
+
+    pub fn input_cursor_home(&mut self) {
+        if let Some(dialog) = &mut self.input_dialog {
+            dialog.cursor_home();
+        }
+    }
+
+    pub fn input_cursor_end(&mut self) {
+        if let Some(dialog) = &mut self.input_dialog {
+            dialog.cursor_end();
+        }
+    }
+
+    pub fn prompt_delete_selected(&mut self) {
+        if self.entries.is_empty() {
+            self.status = "No item selected to delete".to_string();
+            return;
+        }
+        let target = self.entries[self.selected].path.clone();
+        let name = target
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("selected item");
+        self.input_dialog = Some(InputDialog::new(
+            "Confirm Deletion",
+            format!("Delete '{name}'? Type 'y' to confirm:"),
+            "",
+            InputMode::ConfirmDelete { target },
+        ));
+    }
+
+    pub fn confirm_input_dialog(&mut self) {
+        let Some(dialog) = self.input_dialog.take() else {
+            return;
+        };
+        let input_value = dialog.value.trim().to_string();
+
+        match dialog.mode {
+            InputMode::ConfirmDelete { target } => {
+                if input_value.eq_ignore_ascii_case("y") || input_value.eq_ignore_ascii_case("yes")
+                {
+                    self.performDelete(&target);
+                } else {
+                    self.status = "Deletion cancelled".to_string();
+                }
+            }
+            InputMode::Rename { target: _ } => {
+                if input_value.is_empty() {
+                    self.status = "Operation cancelled: empty name".to_string();
+                    return;
+                }
+                self.rename_selected(&input_value);
+            }
+            InputMode::NewFolder => {
+                if input_value.is_empty() {
+                    self.status = "Operation cancelled: empty name".to_string();
+                    return;
+                }
+                self.create_directory(&input_value);
+            }
+        }
+    }
+
+    #[allow(non_snake_case)]
+    fn performDelete(&mut self, targetPath: &std::path::Path) {
+        match delete_path(targetPath) {
+            Ok(_) => {
+                self.refresh();
+                self.status = format!("Deleted {}", targetPath.display());
+            }
+            Err(err) => self.status = format!("Delete failed: {err}"),
+        }
+    }
+
     pub fn delete_selected(&mut self) {
         if self.entries.is_empty() {
             return;
         }
         let target = self.entries[self.selected].path.clone();
-        match delete_path(&target) {
-            Ok(_) => {
-                self.refresh();
-                self.status = format!("Deleted {}", target.display());
-            }
-            Err(err) => self.status = format!("Delete failed: {err}"),
-        }
+        self.performDelete(&target);
     }
 
     pub fn copy_selected(&mut self) {
@@ -571,8 +731,29 @@ impl App {
             self.status = "Cannot paste an item without a filename".to_string();
             return;
         };
-        let target = self.current_dir.join(name);
-        if target == source {
+        let mut target = self.current_dir.join(name);
+        if target.exists() && mode == ClipboardMode::Copy {
+            let stem = std::path::Path::new(&name)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("file");
+            let ext = std::path::Path::new(&name)
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| format!(".{e}"))
+                .unwrap_or_default();
+            let mut counter = 1;
+            loop {
+                let candidate = self
+                    .current_dir
+                    .join(format!("{stem} (copy {counter}){ext}"));
+                if !candidate.exists() {
+                    target = candidate;
+                    break;
+                }
+                counter += 1;
+            }
+        } else if target == source {
             self.status = "Source and destination are the same".to_string();
             return;
         }
@@ -643,7 +824,8 @@ impl App {
         if !self.context_menu_open || self.context_menu_items.is_empty() {
             return;
         }
-        let next = (self.context_menu_index as isize + delta).clamp(0, self.context_menu_items.len() as isize - 1) as usize;
+        let next = (self.context_menu_index as isize + delta)
+            .clamp(0, self.context_menu_items.len() as isize - 1) as usize;
         self.context_menu_index = next;
     }
 
@@ -651,16 +833,20 @@ impl App {
         if !self.context_menu_open {
             return;
         }
-        let action = self.context_menu_items.get(self.context_menu_index).copied().unwrap_or("Open");
+        let action = self
+            .context_menu_items
+            .get(self.context_menu_index)
+            .copied()
+            .unwrap_or("Open");
         match action {
             "Open" => {
                 self.open_selected();
             }
             "Rename" => {
-                self.rename_selected("renamed-item");
+                self.prompt_rename_selected();
             }
             "Delete" => {
-                self.delete_selected();
+                self.prompt_delete_selected();
             }
             "Copy" => {
                 self.copy_selected();
@@ -672,7 +858,15 @@ impl App {
                 self.paste_clipboard();
             }
             "Properties" => {
-                let target = if self.entries.is_empty() { "No item selected".to_string() } else { format!("{} [{}]", self.entries[self.selected].name, self.entries[self.selected].kind.indicator()) };
+                let target = if self.entries.is_empty() {
+                    "No item selected".to_string()
+                } else {
+                    format!(
+                        "{} [{}]",
+                        self.entries[self.selected].name,
+                        self.entries[self.selected].kind.indicator()
+                    )
+                };
                 self.dialog_message = Some(format!("Properties: {target}"));
             }
             _ => {}
@@ -685,7 +879,11 @@ impl App {
         let area = frame.area();
         let outer = Layout::default()
             .direction(ratatui::layout::Direction::Vertical)
-            .constraints([Constraint::Length(4), Constraint::Min(5), Constraint::Length(4)])
+            .constraints([
+                Constraint::Length(4),
+                Constraint::Min(5),
+                Constraint::Length(4),
+            ])
             .split(area);
 
         let header_rows = Layout::default()
@@ -694,9 +892,14 @@ impl App {
             .split(outer[0]);
 
         let header = Paragraph::new(Line::from(vec![
-            Span::styled("TFSV - Terminal File System Visualiser", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "TFSV - Terminal File System Visualiser",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw("  "),
-            Span::raw(format!("by github.com/aayushrambo8")),
+            Span::raw("by github.com/aayushrambo8".to_string()),
         ]))
         .block(Block::default().borders(Borders::ALL).title("tfsv"));
         frame.render_widget(header, header_rows[0]);
@@ -709,7 +912,9 @@ impl App {
             }
             toolbar_spans.push(Span::styled(
                 format!("[{}]", action.label()),
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
             ));
         }
         frame.render_widget(Paragraph::new(Line::from(toolbar_spans)), header_rows[1]);
@@ -725,7 +930,9 @@ impl App {
             let style = if !path.is_dir() {
                 Style::default().fg(Color::DarkGray)
             } else if self.current_dir == *path {
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default()
             };
@@ -744,35 +951,59 @@ impl App {
 
         let visible_rows = file_pane[1].height.saturating_sub(3) as usize;
         self.list_area.set(file_pane[1]);
-        let (first_visible, end_visible) = visible_entry_bounds(
-            self.entries.len(),
-            self.selected,
-            visible_rows,
-        );
+        let (first_visible, end_visible) =
+            visible_entry_bounds(self.entries.len(), self.selected, visible_rows);
         self.visible_start.set(first_visible);
-        let rows = self.entries.iter().enumerate().skip(first_visible).take(end_visible - first_visible).map(|(index, entry)| {
-            let selected = index == self.selected;
-            let hovered = self.hovered_entry.get() == Some(index);
-            let mut style = Style::default();
-            if selected {
-                style = style.add_modifier(Modifier::REVERSED);
-            } else if hovered {
-                style = style.fg(Color::Black).bg(Color::Cyan);
-            }
-            let name = if selected { format!("> {}", entry.display_name) } else { entry.display_name.clone() };
-            Row::new(vec![
-                entry.extension_badge(),
-                name,
-                if entry.path.is_dir() { "Directory".to_string() } else { "File".to_string() },
-                format_size(entry.size),
-            ]).style(style)
-        }).collect::<Vec<_>>();
+        let rows = self
+            .entries
+            .iter()
+            .enumerate()
+            .skip(first_visible)
+            .take(end_visible - first_visible)
+            .map(|(index, entry)| {
+                let selected = index == self.selected;
+                let hovered = self.hovered_entry.get() == Some(index);
+                let mut style = Style::default();
+                if selected {
+                    style = style.add_modifier(Modifier::REVERSED);
+                } else if hovered {
+                    style = style.fg(Color::Black).bg(Color::Cyan);
+                }
+                let name = if selected {
+                    format!("> {}", entry.display_name)
+                } else {
+                    entry.display_name.clone()
+                };
+                Row::new(vec![
+                    entry.extension_badge(),
+                    name,
+                    if entry.path.is_dir() {
+                        "Directory".to_string()
+                    } else {
+                        "File".to_string()
+                    },
+                    format_size(entry.size),
+                ])
+                .style(style)
+            })
+            .collect::<Vec<_>>();
 
         let table = Table::new(
             rows,
-            [Constraint::Length(12), Constraint::Min(20), Constraint::Length(12), Constraint::Length(10)],
+            [
+                Constraint::Length(12),
+                Constraint::Min(20),
+                Constraint::Length(12),
+                Constraint::Length(10),
+            ],
         )
-        .header(Row::new(vec!["TYPE", "NAME", "CLASS", "SIZE"]).style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)))
+        .header(
+            Row::new(vec!["TYPE", "NAME", "CLASS", "SIZE"]).style(
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        )
         .block(Block::default().borders(Borders::ALL));
         frame.render_widget(table, file_pane[1]);
 
@@ -796,7 +1027,11 @@ impl App {
                     .iter()
                     .enumerate()
                     .map(|(idx, item)| {
-                        let prefix = if idx == self.context_menu_index { ">" } else { " " };
+                        let prefix = if idx == self.context_menu_index {
+                            ">"
+                        } else {
+                            " "
+                        };
                         format!("{prefix} {item}")
                     })
                     .collect::<Vec<_>>()
@@ -818,6 +1053,66 @@ impl App {
                 .block(Block::default().title("Dialog").borders(Borders::ALL));
             frame.render_widget(msg, dialog);
         }
+
+        if let Some(input) = &self.input_dialog {
+            let width = area.width.saturating_sub(6).clamp(40, 70);
+            let height = 5u16;
+            let x = area.x + (area.width.saturating_sub(width)) / 2;
+            let y = area.y + (area.height.saturating_sub(height)) / 2;
+            let dialog_rect = Rect {
+                x,
+                y,
+                width,
+                height,
+            };
+
+            let cursor_pos = input.cursor.min(input.value.len());
+            let before = &input.value[..cursor_pos];
+            let cursor_char = if cursor_pos < input.value.len() {
+                let ch = input.value[cursor_pos..].chars().next().unwrap();
+                &input.value[cursor_pos..cursor_pos + ch.len_utf8()]
+            } else {
+                " "
+            };
+            let after_offset = if cursor_pos < input.value.len() {
+                let ch = input.value[cursor_pos..].chars().next().unwrap();
+                cursor_pos + ch.len_utf8()
+            } else {
+                cursor_pos
+            };
+            let after = &input.value[after_offset..];
+
+            let text = vec![
+                Line::from(input.prompt.as_str()),
+                Line::from(vec![
+                    Span::styled(
+                        "> ",
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw(before),
+                    Span::styled(
+                        cursor_char,
+                        Style::default().bg(Color::Cyan).fg(Color::Black),
+                    ),
+                    Span::raw(after),
+                ]),
+                Line::from(Span::styled(
+                    "Enter: Confirm | Esc: Cancel",
+                    Style::default().fg(Color::DarkGray),
+                )),
+            ];
+
+            let dialog_widget = Paragraph::new(text).block(
+                Block::default()
+                    .title(input.title.as_str())
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Cyan)),
+            );
+            frame.render_widget(Clear, dialog_rect);
+            frame.render_widget(dialog_widget, dialog_rect);
+        }
     }
 
     fn breadcrumb_text(&self) -> String {
@@ -828,7 +1123,11 @@ impl App {
             }
             return path;
         }
-        let username = self.home_dir.file_name().unwrap_or_default().to_string_lossy();
+        let username = self
+            .home_dir
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy();
         let relative = self
             .current_dir
             .strip_prefix(&self.home_dir)
@@ -858,7 +1157,11 @@ fn format_size(bytes: u64) -> String {
     }
 }
 
-fn visible_entry_bounds(entry_count: usize, selected: usize, visible_rows: usize) -> (usize, usize) {
+fn visible_entry_bounds(
+    entry_count: usize,
+    selected: usize,
+    visible_rows: usize,
+) -> (usize, usize) {
     let first = selected
         .saturating_sub(visible_rows.saturating_sub(1))
         .min(entry_count.saturating_sub(visible_rows));
@@ -895,6 +1198,27 @@ fn toolbar_button_column(action: ToolbarAction) -> u16 {
     column
 }
 
+fn is_unrestricted_user() -> bool {
+    if std::env::var_os("SUDO_UID").is_some() {
+        return true;
+    }
+    if let Ok(user) = std::env::var("USER") {
+        if user == "root" {
+            return true;
+        }
+    }
+    #[cfg(unix)]
+    {
+        unsafe extern "C" {
+            fn getuid() -> u32;
+        }
+        if unsafe { getuid() == 0 } {
+            return true;
+        }
+    }
+    false
+}
+
 fn resolve_start_directory(
     root: &std::path::Path,
     launch_dir: Option<PathBuf>,
@@ -914,7 +1238,13 @@ fn resolve_start_directory(
         .unwrap_or_else(|| root.to_path_buf())
 }
 
-fn context_menu_rect(area: Rect, list_area: Rect, selected: usize, visible_start: usize, item_count: usize) -> Rect {
+fn context_menu_rect(
+    area: Rect,
+    list_area: Rect,
+    selected: usize,
+    visible_start: usize,
+    item_count: usize,
+) -> Rect {
     let width = area.width.min(24);
     let height = area.height.min(item_count.saturating_add(2) as u16);
     let max_x = area.x.saturating_add(area.width).saturating_sub(width);
@@ -930,35 +1260,43 @@ fn context_menu_rect(area: Rect, list_area: Rect, selected: usize, visible_start
         selected_row
     }
     .clamp(area.y, max_y);
-    Rect { x, y, width, height }
+    Rect {
+        x,
+        y,
+        width,
+        height,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn page_navigation_moves_selection() {
-        let mut app = App {
+    #[allow(non_snake_case)]
+    fn createTestApp(rootDirectory: PathBuf, fileEntries: Vec<FileEntry>) -> App {
+        App {
             settings: Settings::default(),
-            home_dir: PathBuf::from("/tmp"),
+            home_dir: rootDirectory.clone(),
             unrestricted: false,
-            current_dir: std::path::PathBuf::from("/tmp"),
-            entries: vec![
-                FileEntry::from_path(std::path::PathBuf::from("/tmp/a")),
-                FileEntry::from_path(std::path::PathBuf::from("/tmp/b")),
-                FileEntry::from_path(std::path::PathBuf::from("/tmp/c")),
-                FileEntry::from_path(std::path::PathBuf::from("/tmp/d")),
-                FileEntry::from_path(std::path::PathBuf::from("/tmp/e")),
-            ],
+            current_dir: rootDirectory,
+            entries: fileEntries,
             selected: 0,
             sort_mode: SortMode::Name,
             status: String::new(),
             context_menu_open: false,
             context_menu_index: 0,
-            context_menu_items: vec!["Open", "Copy", "Cut", "Paste", "Rename", "Delete", "Properties"],
+            context_menu_items: vec![
+                "Open",
+                "Copy",
+                "Cut",
+                "Paste",
+                "Rename",
+                "Delete",
+                "Properties",
+            ],
             clipboard: None,
             dialog_message: None,
+            input_dialog: None,
             visible_start: Cell::new(0),
             toolbar_area: Cell::new(Rect::default()),
             places_area: Cell::new(Rect::default()),
@@ -966,7 +1304,21 @@ mod tests {
             breadcrumb_area: Cell::new(Rect::default()),
             hovered_entry: Cell::new(None),
             screen_invalidated: false,
-        };
+        }
+    }
+
+    #[test]
+    fn page_navigation_moves_selection() {
+        let mut app = createTestApp(
+            PathBuf::from("/tmp"),
+            vec![
+                FileEntry::from_path(PathBuf::from("/tmp/a")),
+                FileEntry::from_path(PathBuf::from("/tmp/b")),
+                FileEntry::from_path(PathBuf::from("/tmp/c")),
+                FileEntry::from_path(PathBuf::from("/tmp/d")),
+                FileEntry::from_path(PathBuf::from("/tmp/e")),
+            ],
+        );
 
         app.page_down(2);
         assert_eq!(app.selected, 2);
@@ -980,32 +1332,14 @@ mod tests {
 
     #[test]
     fn mouse_selection_clamps_to_valid_index() {
-        let mut app = App {
-            settings: Settings::default(),
-            home_dir: PathBuf::from("/tmp"),
-            unrestricted: false,
-            current_dir: std::path::PathBuf::from("/tmp"),
-            entries: vec![
-                FileEntry::from_path(std::path::PathBuf::from("/tmp/a")),
-                FileEntry::from_path(std::path::PathBuf::from("/tmp/b")),
-                FileEntry::from_path(std::path::PathBuf::from("/tmp/c")),
+        let mut app = createTestApp(
+            PathBuf::from("/tmp"),
+            vec![
+                FileEntry::from_path(PathBuf::from("/tmp/a")),
+                FileEntry::from_path(PathBuf::from("/tmp/b")),
+                FileEntry::from_path(PathBuf::from("/tmp/c")),
             ],
-            selected: 0,
-            sort_mode: SortMode::Name,
-            status: String::new(),
-            context_menu_open: false,
-            context_menu_index: 0,
-            context_menu_items: vec!["Open", "Copy", "Cut", "Paste", "Rename", "Delete", "Properties"],
-            clipboard: None,
-            dialog_message: None,
-            visible_start: Cell::new(0),
-            toolbar_area: Cell::new(Rect::default()),
-            places_area: Cell::new(Rect::default()),
-            list_area: Cell::new(Rect::default()),
-            breadcrumb_area: Cell::new(Rect::default()),
-            hovered_entry: Cell::new(None),
-            screen_invalidated: false,
-        };
+        );
 
         app.select_index(99);
         assert_eq!(app.selected, 2);
@@ -1013,31 +1347,13 @@ mod tests {
 
     #[test]
     fn context_menu_toggles_and_moves_selection() {
-        let mut app = App {
-            settings: Settings::default(),
-            home_dir: PathBuf::from("/tmp"),
-            unrestricted: false,
-            current_dir: std::path::PathBuf::from("/tmp"),
-            entries: vec![
-                FileEntry::from_path(std::path::PathBuf::from("/tmp/a")),
-                FileEntry::from_path(std::path::PathBuf::from("/tmp/b")),
+        let mut app = createTestApp(
+            PathBuf::from("/tmp"),
+            vec![
+                FileEntry::from_path(PathBuf::from("/tmp/a")),
+                FileEntry::from_path(PathBuf::from("/tmp/b")),
             ],
-            selected: 0,
-            sort_mode: SortMode::Name,
-            status: String::new(),
-            context_menu_open: false,
-            context_menu_index: 0,
-            context_menu_items: vec!["Open", "Copy", "Cut", "Paste", "Rename", "Delete", "Properties"],
-            clipboard: None,
-            dialog_message: None,
-            visible_start: Cell::new(0),
-            toolbar_area: Cell::new(Rect::default()),
-            places_area: Cell::new(Rect::default()),
-            list_area: Cell::new(Rect::default()),
-            breadcrumb_area: Cell::new(Rect::default()),
-            hovered_entry: Cell::new(None),
-            screen_invalidated: false,
-        };
+        );
 
         app.toggle_context_menu();
         assert!(app.context_menu_open);
@@ -1055,7 +1371,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!("tfsv-clipboard-{}-{unique}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("tfsv-clipboard-{}-{unique}", std::process::id()));
         let destination = root.join("destination");
         std::fs::create_dir_all(&destination).unwrap();
         let copy_source = root.join("copy.txt");
@@ -1063,34 +1380,19 @@ mod tests {
         std::fs::write(&copy_source, "copy data").unwrap();
         std::fs::write(&cut_source, "cut data").unwrap();
 
-        let mut app = App {
-            settings: Settings::default(),
-            home_dir: root.clone(),
-            unrestricted: false,
-            current_dir: root.clone(),
-            entries: vec![FileEntry::from_path(copy_source.clone())],
-            selected: 0,
-            sort_mode: SortMode::Name,
-            status: String::new(),
-            context_menu_open: false,
-            context_menu_index: 0,
-            context_menu_items: vec!["Open", "Copy", "Cut", "Paste", "Rename", "Delete", "Properties"],
-            clipboard: None,
-            dialog_message: None,
-            visible_start: Cell::new(0),
-            toolbar_area: Cell::new(Rect::default()),
-            places_area: Cell::new(Rect::default()),
-            list_area: Cell::new(Rect::default()),
-            breadcrumb_area: Cell::new(Rect::default()),
-            hovered_entry: Cell::new(None),
-            screen_invalidated: false,
-        };
+        let mut app = createTestApp(
+            root.clone(),
+            vec![FileEntry::from_path(copy_source.clone())],
+        );
 
         app.copy_selected();
         app.current_dir = destination.clone();
         app.paste_clipboard();
         assert!(copy_source.exists());
-        assert_eq!(std::fs::read(destination.join("copy.txt")).unwrap(), b"copy data");
+        assert_eq!(
+            std::fs::read(destination.join("copy.txt")).unwrap(),
+            b"copy data"
+        );
 
         app.current_dir = root.clone();
         app.entries = vec![FileEntry::from_path(cut_source.clone())];
@@ -1099,7 +1401,10 @@ mod tests {
         app.current_dir = destination.clone();
         app.paste_clipboard();
         assert!(!cut_source.exists());
-        assert_eq!(std::fs::read(destination.join("cut.txt")).unwrap(), b"cut data");
+        assert_eq!(
+            std::fs::read(destination.join("cut.txt")).unwrap(),
+            b"cut data"
+        );
         assert!(app.clipboard.is_none());
 
         std::fs::remove_dir_all(root).unwrap();
@@ -1114,41 +1419,20 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!("tfsv-navigation-{}-{unique}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("tfsv-navigation-{}-{unique}", std::process::id()));
         let nested = root.join("nested");
         let hidden = root.join(".hidden");
         std::fs::create_dir_all(&nested).unwrap();
         std::fs::create_dir_all(&hidden).unwrap();
 
-        let mut app = App {
-            settings: Settings::default(),
-            home_dir: root.clone(),
-            unrestricted: false,
-            current_dir: root.clone(),
-            entries: Vec::new(),
-            selected: 0,
-            sort_mode: SortMode::Name,
-            status: String::new(),
-            context_menu_open: false,
-            context_menu_index: 0,
-            context_menu_items: vec!["Open", "Copy", "Cut", "Paste", "Rename", "Delete", "Properties"],
-            clipboard: None,
-            dialog_message: None,
-            visible_start: Cell::new(0),
-            toolbar_area: Cell::new(Rect::default()),
-            places_area: Cell::new(Rect::default()),
-            list_area: Cell::new(Rect::default()),
-            breadcrumb_area: Cell::new(Rect::default()),
-            hovered_entry: Cell::new(None),
-            screen_invalidated: false,
-        };
+        let mut app = createTestApp(root.clone(), Vec::new());
         app.refresh();
 
-        assert!(!handle_key_event(
-            &mut app,
-            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
-        )
-        .unwrap());
+        assert!(
+            !handle_key_event(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),)
+                .unwrap()
+        );
         assert_eq!(app.current_dir, nested);
 
         handle_key_event(
@@ -1243,31 +1527,23 @@ mod tests {
         std::fs::create_dir_all(&documents).unwrap();
         std::fs::create_dir_all(&nested).unwrap();
 
-        let mut app = App {
-            settings: Settings::default(),
-            home_dir: home.clone(),
-            unrestricted: false,
-            current_dir: nested.clone(),
-            entries: Vec::new(),
-            selected: 0,
-            sort_mode: SortMode::Name,
-            status: String::new(),
-            context_menu_open: false,
-            context_menu_index: 0,
-            context_menu_items: vec!["Open", "Copy", "Cut", "Paste", "Rename", "Delete", "Properties"],
-            clipboard: None,
-            dialog_message: None,
-            visible_start: Cell::new(0),
-            toolbar_area: Cell::new(Rect::default()),
-            places_area: Cell::new(Rect::new(0, 0, 20, 20)),
-            list_area: Cell::new(Rect::default()),
-            breadcrumb_area: Cell::new(Rect::new(5, 3, 60, 1)),
-            hovered_entry: Cell::new(None),
-            screen_invalidated: false,
-        };
+        let mut app = createTestApp(home.clone(), Vec::new());
+        app.current_dir = nested.clone();
+        app.places_area = Cell::new(Rect::new(0, 0, 20, 20));
+        app.breadcrumb_area = Cell::new(Rect::new(5, 3, 60, 1));
 
-        assert_eq!(app.breadcrumb_text(), format!("{}/child/nested/", home.file_name().unwrap().to_string_lossy()));
-        let place_names = app.places().into_iter().map(|(name, _)| name).collect::<Vec<_>>();
+        assert_eq!(
+            app.breadcrumb_text(),
+            format!(
+                "{}/child/nested/",
+                home.file_name().unwrap().to_string_lossy()
+            )
+        );
+        let place_names = app
+            .places()
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect::<Vec<_>>();
         assert!(place_names.contains(&"Desktop"));
         assert!(place_names.contains(&"Documents"));
         assert!(place_names.contains(&"Downloads"));
@@ -1288,7 +1564,10 @@ mod tests {
 
         #[cfg(unix)]
         {
-            let outside = home.parent().unwrap().join(format!("tfsv-outside-{unique}"));
+            let outside = home
+                .parent()
+                .unwrap()
+                .join(format!("tfsv-outside-{unique}"));
             std::fs::create_dir_all(&outside).unwrap();
             let escape = home.join("outside-link");
             std::os::unix::fs::symlink(&outside, &escape).unwrap();
@@ -1303,40 +1582,20 @@ mod tests {
     }
 
     #[test]
-    fn mouse_click_opens_selected_directory()
-    {
+    fn mouse_click_opens_selected_directory() {
         use std::time::{SystemTime, UNIX_EPOCH};
 
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!("tfsv-pointer-{}-{unique}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("tfsv-pointer-{}-{unique}", std::process::id()));
         let nested = root.join("nested");
         std::fs::create_dir_all(&nested).unwrap();
 
-        let mut app = App {
-            settings: Settings::default(),
-            home_dir: root.clone(),
-            unrestricted: false,
-            current_dir: root.clone(),
-            entries: vec![FileEntry::from_path(nested.clone())],
-            selected: 0,
-            sort_mode: SortMode::Name,
-            status: String::new(),
-            context_menu_open: false,
-            context_menu_index: 0,
-            context_menu_items: vec!["Open", "Copy", "Cut", "Paste", "Rename", "Delete", "Properties"],
-            clipboard: None,
-            dialog_message: None,
-            visible_start: Cell::new(0),
-            toolbar_area: Cell::new(Rect::default()),
-            places_area: Cell::new(Rect::default()),
-            list_area: Cell::new(Rect::new(10, 2, 40, 8)),
-            breadcrumb_area: Cell::new(Rect::default()),
-            hovered_entry: Cell::new(None),
-            screen_invalidated: false,
-        };
+        let mut app = createTestApp(root.clone(), vec![FileEntry::from_path(nested.clone())]);
+        app.list_area = Cell::new(Rect::new(10, 2, 40, 8));
 
         app.pointer_move(11, 4);
         assert_eq!(app.hovered_entry.get(), Some(0));
@@ -1346,5 +1605,107 @@ mod tests {
         assert_eq!(app.current_dir, nested);
 
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn prompt_create_directory_creates_custom_named_folder() {
+        let root = std::env::temp_dir().join(format!("tfsv-prompt-create-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let mut app = createTestApp(root.clone(), Vec::new());
+
+        app.prompt_create_directory();
+        assert!(app.is_input_dialog_open());
+
+        for ch in "my-new-folder".chars() {
+            app.input_insert_char(ch);
+        }
+        app.confirm_input_dialog();
+        assert!(!app.is_input_dialog_open());
+        assert!(root.join("my-new-folder").exists());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn prompt_rename_and_cancel_dialog_works() {
+        let root = std::env::temp_dir().join(format!("tfsv-prompt-rename-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let file = root.join("original.txt");
+        std::fs::write(&file, "content").unwrap();
+
+        let mut app = createTestApp(root.clone(), vec![FileEntry::from_path(file.clone())]);
+
+        // Test cancel
+        app.prompt_rename_selected();
+        assert!(app.is_input_dialog_open());
+        app.close_input_dialog();
+        assert!(!app.is_input_dialog_open());
+        assert!(file.exists());
+
+        // Test rename
+        app.prompt_rename_selected();
+        if let Some(dialog) = &mut app.input_dialog {
+            dialog.value = "renamed.txt".to_string();
+            dialog.cursor = dialog.value.len();
+        }
+        app.confirm_input_dialog();
+        assert!(!app.is_input_dialog_open());
+        assert!(root.join("renamed.txt").exists());
+        assert!(!file.exists());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn prompt_delete_with_confirmation_and_cancel_works() {
+        let root = std::env::temp_dir().join(format!("tfsv-prompt-del-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let file = root.join("important.txt");
+        std::fs::write(&file, "precious data").unwrap();
+
+        let mut app = createTestApp(root.clone(), vec![FileEntry::from_path(file.clone())]);
+
+        // 1. Cancel preserves file
+        app.prompt_delete_selected();
+        assert!(app.is_input_dialog_open());
+        app.input_insert_char('n');
+        app.confirm_input_dialog();
+        assert!(!app.is_input_dialog_open());
+        assert!(file.exists());
+
+        // 2. Typing 'y' confirms deletion
+        app.prompt_delete_selected();
+        assert!(app.is_input_dialog_open());
+        app.input_insert_char('y');
+        app.confirm_input_dialog();
+        assert!(!app.is_input_dialog_open());
+        assert!(!file.exists());
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn copy_paste_duplicate_creates_copy_suffix() {
+        let root = std::env::temp_dir().join(format!("tfsv-copy-dup-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let file = root.join("notes.txt");
+        std::fs::write(&file, "hello").unwrap();
+
+        let mut app = createTestApp(root.clone(), vec![FileEntry::from_path(file.clone())]);
+
+        app.copy_selected();
+        app.paste_clipboard();
+        assert!(root.join("notes.txt").exists());
+        assert!(root.join("notes (copy 1).txt").exists());
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

@@ -1,7 +1,9 @@
 use std::fs;
-use std::path::PathBuf;
 
-use tfsv::filesystem::{copy_path, create_directory, delete_path, ensure_readable, ensure_safe_path, move_path, rename_path};
+use tfsv::filesystem::{
+    copy_path, create_directory, delete_path, ensure_readable, ensure_safe_path, move_path,
+    rename_path,
+};
 
 #[test]
 fn create_directory_creates_dir() {
@@ -84,6 +86,53 @@ fn safe_path_validation_rejects_symlinks_and_missing_files() {
 
     let missing = root.join("missing.txt");
     assert!(ensure_readable(&missing).is_err());
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn delete_symlink_succeeds() {
+    let root = std::env::temp_dir().join(format!("tfsv-symlink-del-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).unwrap();
+
+    let target = root.join("target.txt");
+    fs::write(&target, "data").unwrap();
+
+    #[cfg(unix)]
+    {
+        let link = root.join("link.txt");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        assert!(link.exists());
+        assert!(delete_path(&link).is_ok());
+        assert!(!link.exists());
+        assert!(target.exists());
+    }
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn copy_directory_with_symlinks_succeeds() {
+    let root = std::env::temp_dir().join(format!("tfsv-copy-symlink-{}", std::process::id()));
+    let source = root.join("source");
+    let target = root.join("target");
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&source).unwrap();
+
+    let real_file = source.join("real.txt");
+    fs::write(&real_file, "file content").unwrap();
+
+    #[cfg(unix)]
+    {
+        let link = source.join("link_to_real.txt");
+        std::os::unix::fs::symlink(&real_file, &link).unwrap();
+
+        assert!(copy_path(&source, &target).is_ok());
+        assert!(target.join("real.txt").exists());
+        let copied_link = target.join("link_to_real.txt");
+        assert!(copied_link.is_symlink());
+    }
 
     let _ = fs::remove_dir_all(&root);
 }

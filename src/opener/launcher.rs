@@ -1,12 +1,14 @@
-use std::path::Path;
-use std::process::Command;
 use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use crossterm::execute;
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
+use crossterm::terminal::{
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+};
+use std::path::Path;
+use std::process::Command;
 
 use super::detect_opener;
 
-pub fn launch_file(path: &Path) -> std::io::Result<()> {
+fn launch_file(path: &Path) -> std::io::Result<()> {
     let mut command_parts = detect_opener(path);
     if command_parts.is_empty() {
         command_parts.push("xdg-open".to_string());

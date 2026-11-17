@@ -3,6 +3,22 @@ use crossterm::event::{KeyEvent, KeyModifiers, MouseButton, MouseEventKind};
 use crate::app::App;
 
 pub fn handle_key_event(app: &mut App, key: KeyEvent) -> Result<bool, std::io::Error> {
+    if app.is_input_dialog_open() {
+        match key.code {
+            crossterm::event::KeyCode::Esc => app.close_input_dialog(),
+            crossterm::event::KeyCode::Enter => app.confirm_input_dialog(),
+            crossterm::event::KeyCode::Char(c) => app.input_insert_char(c),
+            crossterm::event::KeyCode::Backspace => app.input_backspace(),
+            crossterm::event::KeyCode::Delete => app.input_delete(),
+            crossterm::event::KeyCode::Left => app.input_cursor_left(),
+            crossterm::event::KeyCode::Right => app.input_cursor_right(),
+            crossterm::event::KeyCode::Home => app.input_cursor_home(),
+            crossterm::event::KeyCode::End => app.input_cursor_end(),
+            _ => {}
+        }
+        return Ok(false);
+    }
+
     if key.modifiers.contains(KeyModifiers::CONTROL) {
         match key.code {
             crossterm::event::KeyCode::Char('c') => app.copy_selected(),
@@ -15,13 +31,17 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) -> Result<bool, std::io::E
 
     match key.code {
         crossterm::event::KeyCode::Char('q') => return Ok(true),
-        crossterm::event::KeyCode::Char('j') | crossterm::event::KeyCode::Down if app.is_context_menu_open() => {
+        crossterm::event::KeyCode::Char('j') | crossterm::event::KeyCode::Down
+            if app.is_context_menu_open() =>
+        {
             app.move_context_menu(1);
         }
         crossterm::event::KeyCode::Char('j') | crossterm::event::KeyCode::Down => {
             app.move_selection(1);
         }
-        crossterm::event::KeyCode::Char('k') | crossterm::event::KeyCode::Up if app.is_context_menu_open() => {
+        crossterm::event::KeyCode::Char('k') | crossterm::event::KeyCode::Up
+            if app.is_context_menu_open() =>
+        {
             app.move_context_menu(-1);
         }
         crossterm::event::KeyCode::Char('k') | crossterm::event::KeyCode::Up => {
@@ -40,9 +60,9 @@ pub fn handle_key_event(app: &mut App, key: KeyEvent) -> Result<bool, std::io::E
         crossterm::event::KeyCode::Char('r') => app.refresh(),
         crossterm::event::KeyCode::Char('s') => app.cycle_sort(),
         crossterm::event::KeyCode::Char('.') => app.toggle_hidden(),
-        crossterm::event::KeyCode::Char('n') => app.create_directory("new-folder"),
-        crossterm::event::KeyCode::Char('m') => app.rename_selected("renamed-item"),
-        crossterm::event::KeyCode::Char('d') => app.delete_selected(),
+        crossterm::event::KeyCode::Char('n') => app.prompt_create_directory(),
+        crossterm::event::KeyCode::Char('m') => app.prompt_rename_selected(),
+        crossterm::event::KeyCode::Char('d') => app.prompt_delete_selected(),
         crossterm::event::KeyCode::Char('c') => app.toggle_context_menu(),
         crossterm::event::KeyCode::Enter if app.is_context_menu_open() => app.apply_context_menu(),
         crossterm::event::KeyCode::Enter => app.open_selected(),

@@ -158,6 +158,13 @@ impl FileEntry {
 }
 
 pub fn detect_file_kind(path: &Path, name: &str) -> FileKind {
+    if std::fs::symlink_metadata(path)
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        return FileKind::Symlink;
+    }
+
     if path.is_dir() {
         return FileKind::Directory;
     }
@@ -167,7 +174,10 @@ pub fn detect_file_kind(path: &Path, name: &str) -> FileKind {
         .extension()
         .and_then(|value| value.to_str())
         .unwrap_or("");
-    if matches!(lower.as_str(), "dockerfile" | "makefile" | "justfile" | ".bashrc" | ".zshrc" | ".profile" | ".env") {
+    if matches!(
+        lower.as_str(),
+        "dockerfile" | "makefile" | "justfile" | ".bashrc" | ".zshrc" | ".profile" | ".env"
+    ) {
         if matches!(lower.as_str(), "dockerfile" | "makefile" | "justfile") {
             FileKind::Code
         } else {
@@ -191,7 +201,56 @@ pub fn detect_file_kind(path: &Path, name: &str) -> FileKind {
         FileKind::Html
     } else if matches!(extension, "css" | "scss" | "sass" | "less") {
         FileKind::Css
-    } else if matches!(extension, "go" | "rb" | "php" | "swift" | "kt" | "kts" | "scala" | "sc" | "cs" | "fs" | "fsx" | "vb" | "lua" | "pl" | "pm" | "r" | "rmd" | "jl" | "ex" | "exs" | "erl" | "hrl" | "hs" | "lhs" | "clj" | "cljs" | "cljc" | "dart" | "elm" | "vue" | "svelte" | "sql" | "graphql" | "gql" | "proto" | "asm" | "s" | "zig" | "nim" | "v" | "sol" | "m" | "mm" | "groovy" | "gradle" | "mk" | "wasm" | "wat") {
+    } else if matches!(
+        extension,
+        "go" | "rb"
+            | "php"
+            | "swift"
+            | "kt"
+            | "kts"
+            | "scala"
+            | "sc"
+            | "cs"
+            | "fs"
+            | "fsx"
+            | "vb"
+            | "lua"
+            | "pl"
+            | "pm"
+            | "r"
+            | "rmd"
+            | "jl"
+            | "ex"
+            | "exs"
+            | "erl"
+            | "hrl"
+            | "hs"
+            | "lhs"
+            | "clj"
+            | "cljs"
+            | "cljc"
+            | "dart"
+            | "elm"
+            | "vue"
+            | "svelte"
+            | "sql"
+            | "graphql"
+            | "gql"
+            | "proto"
+            | "asm"
+            | "s"
+            | "zig"
+            | "nim"
+            | "v"
+            | "sol"
+            | "m"
+            | "mm"
+            | "groovy"
+            | "gradle"
+            | "mk"
+            | "wasm"
+            | "wat"
+    ) {
         FileKind::Code
     } else if matches!(extension, "json" | "jsonc" | "json5") {
         FileKind::Json
@@ -205,26 +264,156 @@ pub fn detect_file_kind(path: &Path, name: &str) -> FileKind {
         FileKind::Text
     } else if matches!(extension, "pdf") {
         FileKind::Pdf
-    } else if matches!(extension, "png" | "jpg" | "jpeg" | "jpe" | "gif" | "bmp" | "webp" | "avif" | "heic" | "heif" | "tif" | "tiff" | "svg" | "ico" | "icns" | "raw" | "cr2" | "nef" | "arw" | "dng" | "psd" | "xcf" | "ai" | "eps") {
+    } else if matches!(
+        extension,
+        "png"
+            | "jpg"
+            | "jpeg"
+            | "jpe"
+            | "gif"
+            | "bmp"
+            | "webp"
+            | "avif"
+            | "heic"
+            | "heif"
+            | "tif"
+            | "tiff"
+            | "svg"
+            | "ico"
+            | "icns"
+            | "raw"
+            | "cr2"
+            | "nef"
+            | "arw"
+            | "dng"
+            | "psd"
+            | "xcf"
+            | "ai"
+            | "eps"
+    ) {
         FileKind::Image
-    } else if matches!(extension, "mp4" | "m4v" | "mkv" | "avi" | "mov" | "wmv" | "flv" | "webm" | "mpeg" | "mpg" | "mpe" | "mpv" | "m2v" | "3gp" | "3g2" | "mts" | "m2ts" | "ts" | "vob" | "ogv" | "divx" | "asf" | "rm" | "rmvb" | "f4v") {
+    } else if matches!(
+        extension,
+        "mp4"
+            | "m4v"
+            | "mkv"
+            | "avi"
+            | "mov"
+            | "wmv"
+            | "flv"
+            | "webm"
+            | "mpeg"
+            | "mpg"
+            | "mpe"
+            | "mpv"
+            | "m2v"
+            | "3gp"
+            | "3g2"
+            | "mts"
+            | "m2ts"
+            | "ts"
+            | "vob"
+            | "ogv"
+            | "divx"
+            | "asf"
+            | "rm"
+            | "rmvb"
+            | "f4v"
+    ) {
         FileKind::Video
-    } else if matches!(extension, "mp3" | "wav" | "flac" | "aac" | "m4a" | "m4b" | "ogg" | "oga" | "opus" | "wma" | "aiff" | "aif" | "ape" | "alac" | "mid" | "midi" | "amr" | "au" | "ra" | "tta" | "wv" | "dsf" | "dff" | "ac3" | "eac3" | "caf" | "voc" | "spx") {
+    } else if matches!(
+        extension,
+        "mp3"
+            | "wav"
+            | "flac"
+            | "aac"
+            | "m4a"
+            | "m4b"
+            | "ogg"
+            | "oga"
+            | "opus"
+            | "wma"
+            | "aiff"
+            | "aif"
+            | "ape"
+            | "alac"
+            | "mid"
+            | "midi"
+            | "amr"
+            | "au"
+            | "ra"
+            | "tta"
+            | "wv"
+            | "dsf"
+            | "dff"
+            | "ac3"
+            | "eac3"
+            | "caf"
+            | "voc"
+            | "spx"
+    ) {
         FileKind::Audio
-    } else if matches!(extension, "zip" | "tar" | "gz" | "tgz" | "xz" | "bz2" | "7z" | "rar" | "zst" | "lz" | "lzma" | "lz4" | "br" | "cab" | "ar" | "cpio" | "iso" | "dmg" | "deb" | "rpm" | "jar" | "war" | "ear") {
+    } else if matches!(
+        extension,
+        "zip"
+            | "tar"
+            | "gz"
+            | "tgz"
+            | "xz"
+            | "bz2"
+            | "7z"
+            | "rar"
+            | "zst"
+            | "lz"
+            | "lzma"
+            | "lz4"
+            | "br"
+            | "cab"
+            | "ar"
+            | "cpio"
+            | "iso"
+            | "dmg"
+            | "deb"
+            | "rpm"
+            | "jar"
+            | "war"
+            | "ear"
+    ) {
         FileKind::Archive
-    } else if matches!(extension, "sh" | "bash" | "zsh" | "fish" | "ps1" | "psm1" | "bat" | "cmd") {
+    } else if matches!(
+        extension,
+        "sh" | "bash" | "zsh" | "fish" | "ps1" | "psm1" | "bat" | "cmd"
+    ) {
         FileKind::Shell
-    } else if matches!(extension, "doc" | "docx" | "odt" | "rtf" | "ppt" | "pptx" | "odp" | "xls" | "xlsx" | "ods" | "epub" | "mobi") {
+    } else if matches!(
+        extension,
+        "doc"
+            | "docx"
+            | "odt"
+            | "rtf"
+            | "ppt"
+            | "pptx"
+            | "odp"
+            | "xls"
+            | "xlsx"
+            | "ods"
+            | "epub"
+            | "mobi"
+    ) {
         FileKind::Text
     } else if matches!(extension, "ttf" | "otf" | "woff" | "woff2" | "eot") {
         FileKind::Font
-    } else if std::fs::metadata(path)
-        .map(|m| !m.permissions().readonly())
-        .unwrap_or(false)
-    {
-        FileKind::Executable
     } else {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if std::fs::metadata(path)
+                .map(|m| m.is_file() && (m.permissions().mode() & 0o111 != 0))
+                .unwrap_or(false)
+            {
+                return FileKind::Executable;
+            }
+        }
         FileKind::Unknown
     }
 }
@@ -232,6 +421,57 @@ pub fn detect_file_kind(path: &Path, name: &str) -> FileKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn executable_detection_uses_permissions_not_just_writable() {
+        let root = std::env::temp_dir().join(format!("tfsv-exe-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let plain_file = root.join("my_script");
+        std::fs::write(&plain_file, "echo hello").unwrap();
+        // By default, plain_file is readable/writable but not executable
+        assert_eq!(
+            detect_file_kind(&plain_file, "my_script"),
+            FileKind::Unknown
+        );
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&plain_file).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&plain_file, perms).unwrap();
+            assert_eq!(
+                detect_file_kind(&plain_file, "my_script"),
+                FileKind::Executable
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn symlink_entry_has_symlink_kind() {
+        let root = std::env::temp_dir().join(format!("tfsv-symlink-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let target = root.join("target.txt");
+        std::fs::write(&target, "content").unwrap();
+
+        #[cfg(unix)]
+        {
+            let link = root.join("link_to_target");
+            std::os::unix::fs::symlink(&target, &link).unwrap();
+            let entry = FileEntry::from_path(link);
+            assert!(entry.is_symlink);
+            assert_eq!(entry.kind, FileKind::Symlink);
+            assert_eq!(entry.extension_badge(), FileKind::Symlink.icon());
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn extension_badge_is_visible_for_supported_files() {
@@ -244,7 +484,13 @@ mod tests {
 
     #[test]
     fn music_and_video_formats_share_compact_category_badges() {
-        for name in ["track.mp3", "track.flac", "track.m4a", "track.opus", "track.mid"] {
+        for name in [
+            "track.mp3",
+            "track.flac",
+            "track.m4a",
+            "track.opus",
+            "track.mid",
+        ] {
             let entry = FileEntry::from_path(PathBuf::from("/tmp").join(name));
             assert_eq!(entry.kind, FileKind::Audio, "{name}");
             assert_eq!(entry.extension_badge(), "\u{ec1b}", "{name}");
@@ -259,7 +505,14 @@ mod tests {
 
     #[test]
     fn common_source_formats_use_the_code_category() {
-        for name in ["main.go", "app.rb", "view.php", "Main.kt", "contract.sol", "Dockerfile"] {
+        for name in [
+            "main.go",
+            "app.rb",
+            "view.php",
+            "Main.kt",
+            "contract.sol",
+            "Dockerfile",
+        ] {
             let entry = FileEntry::from_path(PathBuf::from("/tmp").join(name));
             assert_eq!(entry.kind, FileKind::Code, "{name}");
             assert_eq!(entry.extension_badge(), "\u{eae9}", "{name}");

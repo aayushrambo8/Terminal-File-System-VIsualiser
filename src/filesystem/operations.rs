@@ -14,7 +14,10 @@ pub enum FileSystemError {
 }
 
 fn is_special_file(file_type: std::fs::FileType) -> bool {
-    file_type.is_fifo() || file_type.is_socket() || file_type.is_block_device() || file_type.is_char_device()
+    file_type.is_fifo()
+        || file_type.is_socket()
+        || file_type.is_block_device()
+        || file_type.is_char_device()
 }
 
 pub fn ensure_safe_path(path: &Path) -> Result<(), FileSystemError> {
@@ -55,7 +58,9 @@ pub fn ensure_readable(path: &Path) -> Result<(), FileSystemError> {
         .map_err(|_| FileSystemError::OperationFailed(path.display().to_string()))?;
     let file_type = metadata.file_type();
     if file_type.is_symlink() || is_special_file(file_type) {
-        return Err(FileSystemError::PermissionDenied(path.display().to_string()));
+        return Err(FileSystemError::PermissionDenied(
+            path.display().to_string(),
+        ));
     }
 
     let mode = metadata.permissions().mode() & 0o777;
@@ -66,7 +71,9 @@ pub fn ensure_readable(path: &Path) -> Result<(), FileSystemError> {
     };
 
     if !readable {
-        return Err(FileSystemError::PermissionDenied(path.display().to_string()));
+        return Err(FileSystemError::PermissionDenied(
+            path.display().to_string(),
+        ));
     }
 
     Ok(())
@@ -93,14 +100,19 @@ pub fn rename_path(from: &Path, new_name: &str) -> Result<PathBuf, FileSystemErr
 }
 
 pub fn delete_path(path: &Path) -> Result<(), FileSystemError> {
-    ensure_safe_path(path)?;
-    ensure_readable(path)?;
+    if path.as_os_str().is_empty() || path == Path::new("") || path == Path::new("/") {
+        return Err(FileSystemError::UnsafePath(path.display().to_string()));
+    }
     let metadata = fs::symlink_metadata(path)
         .map_err(|_| FileSystemError::OperationFailed(path.display().to_string()))?;
     if metadata.file_type().is_symlink() {
         fs::remove_file(path)
             .map_err(|_| FileSystemError::OperationFailed(path.display().to_string()))?;
-    } else if metadata.file_type().is_dir() {
+        return Ok(());
+    }
+    ensure_safe_path(path)?;
+    ensure_readable(path)?;
+    if metadata.file_type().is_dir() {
         fs::remove_dir_all(path)
             .map_err(|_| FileSystemError::OperationFailed(path.display().to_string()))?;
     } else {
@@ -111,28 +123,51 @@ pub fn delete_path(path: &Path) -> Result<(), FileSystemError> {
 }
 
 pub fn copy_path(from: &Path, to: &Path) -> Result<(), FileSystemError> {
+    if from.as_os_str().is_empty() || to.as_os_str().is_empty() {
+        return Err(FileSystemError::UnsafePath(from.display().to_string()));
+    }
+    let metadata = fs::symlink_metadata(from)
+        .map_err(|_| FileSystemError::OperationFailed(from.display().to_string()))?;
+
+    if metadata.file_type().is_symlink() {
+        #[cfg(unix)]
+        {
+            let link_target = fs::read_link(from)
+                .map_err(|_| FileSystemError::OperationFailed(from.display().to_string()))?;
+            std::os::unix::fs::symlink(&link_target, to)
+                .map_err(|_| FileSystemError::OperationFailed(to.display().to_string()))?;
+            return Ok(());
+        }
+        #[cfg(not(unix))]
+        {
+            return Err(FileSystemError::UnsafePath(from.display().to_string()));
+        }
+    }
+
     ensure_safe_path(from)?;
     ensure_safe_path(to)?;
     ensure_readable(from)?;
-    let metadata = fs::symlink_metadata(from)
-        .map_err(|_| FileSystemError::OperationFailed(from.display().to_string()))?;
-    if metadata.file_type().is_symlink() || is_special_file(metadata.file_type()) {
+
+    if is_special_file(metadata.file_type()) {
         return Err(FileSystemError::UnsafePath(from.display().to_string()));
     }
+
     if metadata.file_type().is_dir() {
         fs::create_dir_all(to)
             .map_err(|_| FileSystemError::OperationFailed(to.display().to_string()))?;
         for entry in fs::read_dir(from)
             .map_err(|_| FileSystemError::OperationFailed(from.display().to_string()))?
         {
-            let entry = entry.map_err(|_| FileSystemError::OperationFailed(from.display().to_string()))?;
+            let entry =
+                entry.map_err(|_| FileSystemError::OperationFailed(from.display().to_string()))?;
             let source = entry.path();
             let target = to.join(entry.file_name());
             copy_path(&source, &target)?;
         }
     } else {
-        fs::copy(from, to)
-            .map_err(|_| FileSystemError::OperationFailed(format!("{} -> {}", from.display(), to.display())))?;
+        fs::copy(from, to).map_err(|_| {
+            FileSystemError::OperationFailed(format!("{} -> {}", from.display(), to.display()))
+        })?;
     }
     Ok(())
 }
