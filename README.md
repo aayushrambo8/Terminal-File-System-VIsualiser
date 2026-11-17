@@ -37,7 +37,7 @@
 │   Trash        │   install.sh                                        3.3 KB  │
 │                 │   LICENSE                                          35.1 KB  │
 ├─────────────────┴──────────────────────────────────────────────────────────────┤
-│  [Normal Mode] 9 items | Selected: README.md (4.4 KB)              Press '?' / 'q'│
+│  [Normal Mode] 9 items | Selected: README.md (4.4 KB)           Press '?' / 'q'│
 └────────────────────────────────────────────────────────────────────────────────┘
 ```
 
